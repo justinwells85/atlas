@@ -8,7 +8,7 @@ Before starting, install:
 
 - **Java 21 LTS** — recommended via SDKMAN: `curl -s "https://get.sdkman.io" | bash`, then `sdk install java 21-tem`
 - **Maven 3.9+** — `brew install maven`
-- **PostgreSQL 16+** — `brew install postgresql@16`
+- **PostgreSQL 14+** — `brew install postgresql@14`
 - **Git** — already on macOS
 - **Claude Code** — see https://docs.claude.com/en/docs/claude-code/overview for the current installer
 
@@ -76,7 +76,7 @@ git push -u origin main
 ## Step 4: Verify Postgres is running
 
 ```bash
-brew services start postgresql@16
+brew services start postgresql@14
 createdb atlas
 psql atlas -c "SELECT version();"
 ```

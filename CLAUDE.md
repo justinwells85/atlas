@@ -17,7 +17,7 @@
 - **Language**: Java 21 LTS
 - **Framework**: Spring Boot 4.0.x
 - **AI/MCP**: Spring AI 1.1.x (Spring AI MCP starters)
-- **Database**: PostgreSQL 16+ (local prototype), MySQL/MariaDB (production target)
+- **Database**: PostgreSQL 14+ (local prototype), MySQL/MariaDB (production target)
 - **Build**: Maven
 - **Migrations**: Flyway
 - **Testing**: JUnit 5, Testcontainers, AssertJ
@@ -34,7 +34,7 @@ mvn verify                       # Run unit + integration tests
 mvn clean package                # Build a runnable JAR
 mvn flyway:migrate               # Apply pending DB migrations
 
-brew services start postgresql@16
+brew services start postgresql@14
 psql atlas                       # Connect to the local Atlas database
 ```
 

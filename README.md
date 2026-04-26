@@ -25,7 +25,7 @@ See [`docs/architecture.md`](docs/architecture.md) for details.
 
 - Java 21 LTS
 - Maven 3.9+
-- PostgreSQL 16+ (local)
+- PostgreSQL 14+ (local)
 - An Anthropic API key
 - (Eventually) An Atlassian/Confluence API token
 
@@ -37,7 +37,7 @@ git clone https://github.com/justinwells85/atlas.git
 cd atlas
 
 # Start Postgres locally
-brew services start postgresql@16
+brew services start postgresql@14
 createdb atlas
 
 # Apply schema migrations

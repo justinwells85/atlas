@@ -38,7 +38,7 @@ A Spring Boot CLI/REST service that conducts AI-assisted interviews with service
 
 ### 2. Database
 
-PostgreSQL 16+ for local prototyping. The schema (see `schema.md`) is designed to be portable to MySQL/MariaDB for production migration.
+PostgreSQL 14+ for local prototyping. The schema (see `schema.md`) is designed to be portable to MySQL/MariaDB for production migration.
 
 **Source-of-truth principles:**
 - All service inventory data lives here. Confluence is generated output.

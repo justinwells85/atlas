@@ -47,16 +47,18 @@ Architectural decisions captured in lightweight ADR (Architecture Decision Recor
 
 ## ADR-003: Local Postgres prototype, AWS MySQL/MariaDB production
 
-**Status**: Accepted
+**Status**: Accepted (revised 2026-04-26 — see Revision below)
 
 **Context**: Work environment provides easy access to MySQL/MariaDB on AWS but not Postgres-as-a-service. Local Postgres lets the prototype get built fast on a Mac.
 
-**Decision**: PostgreSQL 16+ locally for the prototype. Schema designed to be portable. Production migration to AWS RDS with MySQL or MariaDB.
+**Decision**: PostgreSQL 14+ locally for the prototype. Schema designed to be portable. Production migration to AWS RDS with MySQL or MariaDB.
 
 **Consequences**:
 - Schema must avoid vendor-specific features where possible (or accept rewriting on migration).
 - JSON columns supported by both — but query operators differ. Application code must use portable JSON access patterns (JPA methods, not Postgres `@>` and `?` operators).
 - Postgres ENUM types don't port directly. Resolve before V2 migration.
+
+**Revision (2026-04-26)**: Original decision specified PostgreSQL 16+. Relaxed to 14+ because the local Mac already had `postgresql@14` running and V1 schema features (`gen_random_uuid()`, `JSONB`, GIN indexes, `TIMESTAMPTZ`, ENUM types) are all available in PG 14. Production target (MySQL/MariaDB) is unchanged, so the version of the local prototype Postgres has no downstream impact.
 
 ---
 
