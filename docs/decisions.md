@@ -4,6 +4,27 @@ Architectural decisions captured in lightweight ADR (Architecture Decision Recor
 
 ---
 
+## ADR-007: Pin Spring Boot 4 integration modules explicitly
+
+**Status**: Accepted
+
+**Context**: During Phase 0 smoke testing we discovered two breaking changes from prior versions, neither flagged at compile time:
+
+1. **Spring Boot 4 modularized autoconfiguration.** In 3.x, putting `flyway-core` on the classpath was enough to trigger Flyway autoconfig. In 4.x, autoconfig classes moved out of `spring-boot-autoconfigure` and into per-integration modules (e.g., `org.springframework.boot:spring-boot-flyway`, `spring-boot-hibernate`, `spring-boot-data-jdbc`). Without the integration module, the autoconfig classes are simply absent — the application starts cleanly with no warning, but the integration silently doesn't initialize.
+
+2. **Testcontainers 2.x renamed every artifact** to add a `testcontainers-` prefix (e.g., `org.testcontainers:postgresql` → `org.testcontainers:testcontainers-postgresql`). Spring Boot 4 manages Testcontainers 2.x by default, so any 1.x artifact name in `pom.xml` produces "version missing" errors with no hint that the artifact was renamed.
+
+Both surfaced because behavior-focused tests (ADR-006) asserted on real outcomes (migration applied, container started) rather than on code presence. A test that just checked "is the FlywayAutoConfiguration bean defined?" would have caught the first one earlier; a test that asserted "the schema we expect exists" caught it without coupling to internals.
+
+**Decision**: For every Spring Boot 4 integration we add (Flyway, JPA, MCP server, etc.), declare both the underlying library AND the corresponding `spring-boot-<integration>` module explicitly in `pom.xml`. Do not assume transitive pickup from a starter or a base library. When adding any dependency from a Spring Boot 3.x tutorial, verify the artifact ID against Spring Boot 4 reference docs at https://docs.spring.io/spring-boot/reference/.
+
+**Consequences**:
+- POM is more explicit (and longer) than typical Spring Boot 3.x examples.
+- Online tutorials, Stack Overflow answers, and AI-generated examples written before late 2025 will frequently be wrong about both module names and autoconfig behavior. Treat all examples skeptically.
+- Future migrations (e.g., bumping to Spring Boot 5) should re-verify which integration modules are needed; the modularization may be revisited.
+
+---
+
 ## ADR-006: Strict TDD with Behavior-Focused Tests
 
 **Status**: Accepted
