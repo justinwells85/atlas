@@ -106,11 +106,15 @@ Always show this upfront for non-trivial work:
 6. **Tests** — behavior-focused tests derived from success criteria (TDD: these come first, must fail before implementation).
 7. **Open questions** — anything you need from the user before starting.
 
-Wait for confirmation before executing. After each major step, pause and report results before continuing.
+Group the numbered steps into **review milestones** — points where a deliverable exists that the user can validate (e.g., "tests pass," "schema migrated and verified," "MCP tool returns correct data"). Wait for confirmation before executing the plan. Then work autonomously through each milestone, pausing only at milestone boundaries (or at true blockers) — not between every step.
 
 ## Working with the User
 
-- The user prefers step-by-step execution with confirmation gates. Default to proposing a plan, waiting for approval, executing one step, reporting, then waiting again.
-- The user is a novice Java developer. Explain non-obvious choices briefly. Avoid jargon when a simpler term exists.
+- Work autonomously toward the next review milestone. Make judgment calls along the way and bundle them into the milestone report rather than pausing to ask. The user prefers to discuss decisions at the milestone, when there is a deliverable to validate against — not at every fork in the road.
+- Pause and ask the user only when one of the following is true:
+  1. **True blocker** — authentication needed, a required tool/credential is missing, or the environment fails in a way that requires user action.
+  2. **High-blast-radius, hard-to-reverse decision** — creating external accounts, deleting data, or locking in a foundational architecture decision the user hasn't already settled in CLAUDE.md or the decision log.
+  3. **Review milestone reached** — a deliverable exists that the user can validate. Present it, list the judgment calls made along the way, and wait.
+- For low-blast-radius choices that would otherwise prompt a question, decide based on best judgment, log the decision in the next milestone report, and proceed. The user will redirect at the milestone if any decision was wrong.
+- The user is a novice Java developer. Explain non-obvious choices briefly in milestone reports. Avoid jargon when a simpler term exists.
 - For trivial tasks (typo fixes, formatting), full planning format is not required.
-- When a plan has multiple open questions, ask them one at a time and wait for each answer before asking the next. Do not batch multiple questions into a single message — the user has explicitly asked for this serial cadence.
