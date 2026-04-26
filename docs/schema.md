@@ -44,7 +44,7 @@
 
 ## services Table
 
-The main table. One row per service. DDL lives in `db/migrations/V1__initial_schema.sql`.
+The main table. One row per service. DDL lives in `src/main/resources/db/migration/V1__initial_schema.sql`.
 
 ```sql
 CREATE TYPE service_status AS ENUM ('active', 'deprecated', 'in_dev');
@@ -94,7 +94,7 @@ These need resolution before V2 migrations are written:
 
 ## Migrations
 
-Managed via Flyway. Files in `db/migrations/`:
+Managed via Flyway. Files in `src/main/resources/db/migration/` (Flyway's classpath default):
 
 - `V1__initial_schema.sql` — services table
 
