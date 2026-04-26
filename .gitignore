@@ -1,0 +1,42 @@
+# Build output
+target/
+*.class
+*.jar
+*.war
+
+# Maven
+dependency-reduced-pom.xml
+.mvn/wrapper/maven-wrapper.jar
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.project
+.classpath
+.settings/
+.factorypath
+.apt_generated/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Spring local overrides
+application-local.properties
+application-local.yml
+
+# Secrets / env
+.env
+.env.local
+*.pem
+*.key
+
+# Claude Code per-user local config (project-shared config in settings.json is committed)
+.claude/settings.local.json

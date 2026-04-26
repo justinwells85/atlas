@@ -1,0 +1,115 @@
+# Atlas — Service Documentation System
+
+## Project Context
+
+**WHY**: Service documentation in our organization is manually maintained, frequently stale, and lives in disconnected places. Atlas auto-generates and updates a Confluence wiki of service inventory (APIs, dependencies, owners, databases) from a central database, reducing manual effort and keeping documentation current.
+
+**WHAT**: A Spring Boot application that:
+1. Collects structured data about services via an AI-assisted intake pipeline
+2. Stores it in a central database (Postgres locally, MySQL/MariaDB in production)
+3. Exposes the data via a Model Context Protocol (MCP) server
+4. Auto-syncs to Confluence pages
+
+**HOW**: See `docs/architecture.md` for the system overview, `docs/schema.md` for the data model, `docs/confluence-template.md` for the output specification, `docs/roadmap.md` for current phase, and `docs/decisions.md` for the rationale behind key technology choices.
+
+## Tech Stack
+
+- **Language**: Java 21 LTS
+- **Framework**: Spring Boot 4.0.x
+- **AI/MCP**: Spring AI 1.1.x (Spring AI MCP starters)
+- **Database**: PostgreSQL 16+ (local prototype), MySQL/MariaDB (production target)
+- **Build**: Maven
+- **Migrations**: Flyway
+- **Testing**: JUnit 5, Testcontainers, AssertJ
+- **AI client**: anthropic-java SDK
+
+Pin exact versions in `pom.xml`. Spring AI MCP APIs evolved through 2025; don't trust online examples without checking against the version pinned here.
+
+## Common Commands
+
+```
+mvn spring-boot:run              # Run the application
+mvn test                         # Run unit tests
+mvn verify                       # Run unit + integration tests
+mvn clean package                # Build a runnable JAR
+mvn flyway:migrate               # Apply pending DB migrations
+
+brew services start postgresql@16
+psql atlas                       # Connect to the local Atlas database
+```
+
+## Constraints
+
+- **Open source policy**: This project must use custom code only. The OB1 reference (https://github.com/NateBJones-Projects/OB1) is architectural inspiration only — do not copy its code.
+- **Migration portability**: All persistence code must be portable between Postgres and MySQL/MariaDB. Use JPA's portable JSON support, not Postgres-native JSONB operators in queries.
+
+## Behavioral Guidelines
+
+These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+### 1. Think Before Coding
+
+Don't assume. Don't hide confusion. Surface tradeoffs.
+
+- State assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them — don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+### 2. Simplicity First
+
+Minimum code that solves the problem. Nothing speculative.
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+### 3. Surgical Changes
+
+Touch only what you must. Clean up only your own mess.
+
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it — don't delete it.
+- Remove imports/variables/functions YOUR changes made unused.
+
+Every changed line should trace directly to the user's request.
+
+### 4. Strict TDD with Behavior-Focused Tests
+
+Transform every non-trivial task into a TDD workflow:
+
+1. **Red**: Write tests that define the desired behavior and fail.
+2. **Green**: Write the minimal code needed to make those tests pass.
+3. **Refactor**: Improve the code while keeping all tests green.
+
+Tests serve three purposes: living requirements documentation, refactor safety, and migration insurance. They must be decoupled from implementation:
+
+- Test through public interfaces only — REST endpoints, service-layer APIs, MCP tool contracts. Never test private methods or internal state.
+- Mock only at architectural seams — external services (Anthropic API, Confluence API). Use real implementations for everything inside Atlas.
+- Use Testcontainers for database tests — real DB engine, never in-memory substitutes.
+- Test names read as specifications: `whenServiceIsRegistered_thenItAppearsInSearch`, not `testRegisterServiceMethod`.
+- If a test breaks when implementation changes but behavior doesn't, the test is wrong. Rewrite to assert observable behavior.
+
+### 5. Planning Format
+
+Always show this upfront for non-trivial work:
+
+1. **Goal** — one-sentence restatement of what we're building.
+2. **Success criteria** — observable behaviors that define "done." These become the test cases.
+3. **Assumptions** — what you're assuming about inputs, edge cases, or intent. Flag anything uncertain.
+4. **Approach** — high-level strategy. If multiple approaches are viable, list them with tradeoffs.
+5. **Steps** — numbered, atomic. Each step is small enough to review independently.
+6. **Tests** — behavior-focused tests derived from success criteria (TDD: these come first, must fail before implementation).
+7. **Open questions** — anything you need from the user before starting.
+
+Wait for confirmation before executing. After each major step, pause and report results before continuing.
+
+## Working with the User
+
+- The user prefers step-by-step execution with confirmation gates. Default to proposing a plan, waiting for approval, executing one step, reporting, then waiting again.
+- The user is a novice Java developer. Explain non-obvious choices briefly. Avoid jargon when a simpler term exists.
+- For trivial tasks (typo fixes, formatting), full planning format is not required.
