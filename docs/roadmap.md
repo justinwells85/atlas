@@ -10,10 +10,10 @@ Phased delivery plan. The goal of the prototype phase is to prove the full pipel
 - [x] Choose DB strategy (local Postgres → AWS MySQL/MariaDB)
 - [x] Design `services` table schema (V1 migration)
 - [x] Set up project structure and CLAUDE.md for Claude Code
-- [ ] Initialize git repo and push to GitHub
-- [ ] Generate Spring Boot project scaffold via Spring Initializr
-- [ ] Configure Flyway and run V1 migration locally
-- [ ] First green test (smoke test: app starts, DB connects)
+- [x] Initialize git repo and push to GitHub
+- [x] Generate Spring Boot project scaffold (hand-written `pom.xml` pinned to Spring Boot 4.0.6, Spring AI 1.1.4 BOM, Java 21)
+- [x] Configure Flyway and run V1 migration locally (verified against local `atlas` DB and Testcontainers)
+- [x] First green test (smoke test: app starts, DB connects, V1 migration applied)
 
 ## Phase 1 — Schema Completion
 
@@ -27,7 +27,8 @@ Phased delivery plan. The goal of the prototype phase is to prove the full pipel
 ## Phase 2 — Intake Pipeline
 
 - [ ] Spring Boot CLI/REST entry point for intake
-- [ ] Anthropic API integration (anthropic-java SDK)
+- [ ] Add `com.anthropic:anthropic-java` dependency to `pom.xml` (deferred from Phase 0 per CLAUDE.md "Simplicity First" — pin only when used)
+- [ ] Anthropic API integration using anthropic-java SDK
 - [ ] Interview flow logic (question → response → follow-up → validation)
 - [ ] Persistence layer for capturing interview output to DB
 - [ ] Tests: behavior-focused, with Testcontainers for DB integration
