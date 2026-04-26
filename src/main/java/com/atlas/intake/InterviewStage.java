@@ -1,0 +1,9 @@
+package com.atlas.intake;
+
+public enum InterviewStage {
+    AWAITING_NAME,
+    AWAITING_DESCRIPTION,
+    AWAITING_DESCRIPTION_CLARIFICATION,
+    AWAITING_OWNER_TEAM,
+    AWAITING_STATUS
+}

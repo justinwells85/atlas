@@ -26,12 +26,12 @@ Phased delivery plan. The goal of the prototype phase is to prove the full pipel
 
 ## Phase 2 — Intake Pipeline
 
-- [ ] Spring Boot CLI/REST entry point for intake
-- [ ] Add `com.anthropic:anthropic-java` dependency to `pom.xml` (deferred from Phase 0 per CLAUDE.md "Simplicity First" — pin only when used)
-- [ ] Anthropic API integration using anthropic-java SDK
-- [ ] Interview flow logic (question → response → follow-up → validation)
-- [ ] Persistence layer for capturing interview output to DB
-- [ ] Tests: behavior-focused, with Testcontainers for DB integration
+- [x] Spring Boot REST entry point for intake (CLI dropped per ADR-011)
+- [x] Add `com.anthropic:anthropic-java` dependency to `pom.xml`
+- [x] Anthropic API integration using anthropic-java SDK
+- [x] Interview flow logic (question → response → follow-up → validation)
+- [x] Persistence layer for capturing interview output to DB
+- [x] Tests: behavior-focused, with Testcontainers for DB integration
 
 ## Phase 3 — MCP Server
 
