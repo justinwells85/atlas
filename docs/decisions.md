@@ -4,6 +4,31 @@ Architectural decisions captured in lightweight ADR (Architecture Decision Recor
 
 ---
 
+## ADR-011: REST entry point for intake; conversation state deferred
+
+**Status**: Accepted
+
+**Context**: Phase 2 of the roadmap calls for a "Spring Boot CLI/REST entry point for intake." The intake flow is conversational and turn-based (ask → respond → follow-up → validate → persist), so the entry-point shape has real downstream consequences:
+
+- A **CLI** (`CommandLineRunner` triggered by `--intake`) maps the conversation onto stdin/stdout naturally. Single-user, single-session, no auth, no session storage. Simplest possible shape, but not callable from a future web UI or by another service.
+- A **REST endpoint** (`@RestController`) is reachable by any HTTP client, so a future UI or scripted caller can drive it. Cost: HTTP servers are stateless by default but interviews are stateful, so a session-storage decision (in-memory map, DB-backed, HTTP session) is forced. Plus auth becomes a real concern once anything on the network can reach it.
+- **Both** doubles the test surface and pays the REST complexity cost regardless.
+
+**Decision**: REST (`@RestController`) for the intake entry point. Conversation state tracking is deliberately deferred — the Phase 2 implementation is server-stateless: the prior conversation history rides in each request body; the server returns the next question (or a final result with a persisted `serviceId`).
+
+Rationale:
+- Atlas is heading toward enterprise handoff (Phase 6/7); preserving the option to add a UI without a transport rewrite is worth more than the LOC saved by CLI.
+- The asymmetric cost-of-being-wrong: CLI → REST is a bounded refactor; REST → CLI means already-paid complexity stays unused.
+- Stateless turns sidestep the session-storage design problem entirely. When real UX needs arrive (multi-device, resume-an-interview), the persistence shape is decided then with a real consumer informing the choice.
+
+**Consequences**:
+- `pom.xml` adds `spring-boot-starter-web` plus the per-integration modules (`spring-boot-webmvc`, `spring-boot-tomcat`) per ADR-007.
+- The embedded server binds to `127.0.0.1` only (`server.address=127.0.0.1` in `application.properties`) for the prototype — not network-reachable, so we can defer auth without exposing the API.
+- Phase 2 surfaces `/api/smoke/anthropic` (M1) and `/api/intake/turn` (M3) as the entry points. No `CommandLineRunner` for intake.
+- Deferred work tracked here: (1) auth model when the prototype goes off `127.0.0.1`, (2) interview-session persistence if/when conversations need to span requests on the server side.
+
+---
+
 ## ADR-010: JSON column access via Hibernate `@JdbcTypeCode(SqlTypes.JSON)`
 
 **Status**: Accepted
