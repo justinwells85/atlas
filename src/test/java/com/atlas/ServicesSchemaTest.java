@@ -1,6 +1,5 @@
 package com.atlas;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -70,10 +69,6 @@ class ServicesSchemaTest {
         assertThat(enumCount).isEqualTo(0L);
     }
 
-    @Test
-    @Disabled("ADR-008: enabled in Phase 2 once JPA @PreUpdate is wired. " +
-            "Until then, raw SQL UPDATEs do not bump updated_at.")
-    void whenServiceRowIsUpdated_thenUpdatedAtIsBumped() {
-        // Phase 2 will assert that updating any column moves updated_at past created_at.
-    }
+    // ADR-008 updated_at @PreUpdate behavior is asserted in ServiceRepositoryTest
+    // (the JPA path); raw SQL writes intentionally do not bump updated_at.
 }
