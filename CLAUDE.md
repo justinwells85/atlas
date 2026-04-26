@@ -113,3 +113,4 @@ Wait for confirmation before executing. After each major step, pause and report 
 - The user prefers step-by-step execution with confirmation gates. Default to proposing a plan, waiting for approval, executing one step, reporting, then waiting again.
 - The user is a novice Java developer. Explain non-obvious choices briefly. Avoid jargon when a simpler term exists.
 - For trivial tasks (typo fixes, formatting), full planning format is not required.
+- When a plan has multiple open questions, ask them one at a time and wait for each answer before asking the next. Do not batch multiple questions into a single message — the user has explicitly asked for this serial cadence.
