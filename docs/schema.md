@@ -32,15 +32,15 @@
 
 | Table | Status |
 |-------|--------|
-| services | ✅ DDL complete (V1) |
-| apis | ⬜ TBD |
-| databases | ⬜ TBD |
-| external_dependencies | ⬜ TBD |
-| service_dependencies | ⬜ TBD |
-| service_databases | ⬜ TBD |
-| api_consumers | ⬜ TBD |
-| service_external_deps | ⬜ TBD |
-| service_changes | ⬜ TBD |
+| services | ✅ DDL complete (V1, status portability fix V2) |
+| apis | ✅ DDL complete (V3) |
+| databases | ✅ DDL complete (V4) |
+| external_dependencies | ✅ DDL complete (V5) |
+| service_dependencies | ✅ DDL complete (V6) |
+| service_databases | ✅ DDL complete (V7) |
+| api_consumers | ✅ DDL complete (V8) |
+| service_external_deps | ✅ DDL complete (V9) |
+| service_changes | ✅ DDL complete (V10) |
 
 ## services Table
 
@@ -84,18 +84,27 @@ CREATE INDEX idx_services_metadata ON services USING GIN (metadata);
 | Operational | `services.support_contact`, `services.sla`, `services.notes` |
 | Change History | `services.updated_at`, `service_changes` |
 
-## Open Schema Decisions
+## Resolved Schema Decisions
 
-These need resolution before V2 migrations are written:
+The three decisions that previously lived here are now captured as ADRs in `decisions.md`:
 
-- **`updated_at` auto-update**: Currently a default on insert but doesn't change on row updates. Decide: DB trigger vs. application-level via JPA `@PreUpdate`.
-- **`status` enum portability**: Postgres ENUM types don't port directly to MySQL. May need to switch to a CHECK constraint with a TEXT column for portable schema.
-- **JSON query patterns**: Spec how the application accesses `metadata`. If we use JPA's portable JSON support, we don't need Postgres-specific operators in code.
+- **ADR-008** — `updated_at` auto-update via JPA `@PreUpdate` (no DB trigger).
+- **ADR-009** — `status` portability via `TEXT` + `CHECK` constraint (no Postgres ENUM type).
+- **ADR-010** — JSON column access via Hibernate `@JdbcTypeCode(SqlTypes.JSON)`; no dialect-specific operators in queries.
 
 ## Migrations
 
 Managed via Flyway. Files in `src/main/resources/db/migration/` (Flyway's classpath default):
 
 - `V1__initial_schema.sql` — services table
+- `V2__services_status_portability.sql` — services.status converted from ENUM to TEXT + CHECK (ADR-009)
+- `V3__apis_table.sql` — apis table
+- `V4__databases_table.sql` — databases table
+- `V5__external_dependencies_table.sql` — external_dependencies table
+- `V6__service_dependencies_table.sql` — directed service-to-service edges (no self-edge, unique pair)
+- `V7__service_databases_table.sql` — service ↔ database join with `is_owner` flag
+- `V8__api_consumers_table.sql` — api ↔ consumer-service join
+- `V9__service_external_deps_table.sql` — service ↔ external-dependency join
+- `V10__service_changes_table.sql` — append-only audit log; `service_id` is a soft FK so history outlives the service
 
 New migrations follow `V<N>__<description>.sql` naming. Never edit a committed migration; create a new one.

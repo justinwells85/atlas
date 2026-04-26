@@ -4,6 +4,64 @@ Architectural decisions captured in lightweight ADR (Architecture Decision Recor
 
 ---
 
+## ADR-010: JSON column access via Hibernate `@JdbcTypeCode(SqlTypes.JSON)`
+
+**Status**: Accepted
+
+**Context**: `services.metadata` is a JSON column today (`JSONB` on Postgres, `JSON` on MySQL/MariaDB). The application needs a way to read and write it that works on both databases. Three options were considered:
+
+1. **Hibernate `@JdbcTypeCode(SqlTypes.JSON)`** on a `Map<String, Object>` (or domain object) field. Hibernate 6 — bundled with Spring Boot 4 — picks the right JDBC type per dialect (`JSONB` on Postgres, `JSON` on MySQL) and serialises through Jackson transparently.
+2. **Custom `AttributeConverter<Map, String>`** that serialises to a `String` column. Also portable, but more boilerplate and loses the "this is JSON" signal at the schema layer.
+3. **Postgres-native operators (`@>`, `?`, `->>`) inside JPQL/native queries.** Fast for filtering, but locks Atlas to Postgres and is already forbidden by `CLAUDE.md` (Constraints: Migration portability).
+
+**Decision**: Use `@JdbcTypeCode(SqlTypes.JSON)` on a `Map<String, Object>` field for `metadata` (and any future JSON column). Filter on JSON contents in Java after fetching, never in the WHERE clause. If a particular JSON key becomes a frequent query target, promote it to a real column rather than reach for dialect-specific operators.
+
+**Consequences**:
+- One annotation, no converter code, identical entity definition on Postgres and MySQL/MariaDB.
+- The existing `idx_services_metadata` GIN index remains useful for any future ad-hoc DBA-side queries but is not relied on by application code.
+- We accept that filtering on JSON keys happens in Java — fine at prototype scale (low row counts), and the "promote to a column" escape hatch is well-understood when it isn't.
+
+---
+
+## ADR-009: `status` enum portability via TEXT + CHECK constraint
+
+**Status**: Accepted
+
+**Context**: V1 defined `service_status` as a Postgres `ENUM` type. Postgres ENUMs do not port to MySQL/MariaDB — MySQL has its own `ENUM` column type with different semantics, and altering the value set on either side is awkward. To keep V1 honest about its eventual production target (AWS MySQL/MariaDB, per ADR-003), the column type needs to be one that both engines model identically.
+
+Options:
+
+1. **`TEXT` column with a `CHECK` constraint** restricting values to the allowed set. Identical SQL on Postgres and MySQL 8 / MariaDB 10.6+. Slightly weaker than a true type, but enforced at row level on both engines.
+2. **Keep Postgres `ENUM`** and accept rewriting the column at MySQL migration time. Stronger typing now, more work later.
+3. **`TEXT` only, validate in application code.** Most flexible, weakest safety — relies entirely on the app being the only writer, with no defence in depth at the DB layer.
+
+**Decision**: Convert `services.status` to `TEXT NOT NULL DEFAULT 'active'` with `CHECK (status IN ('active','deprecated','in_dev'))`. Drop the `service_status` ENUM type. Pair the DB-level CHECK with a Java enum at the application layer when entities arrive in Phase 2 (defence in depth: type safety in the app, value enforcement in the DB).
+
+**Consequences**:
+- V2 migration applies this change. Since Phase 0 just landed and the local `atlas` DB has no real data, the migration can drop and recreate the column without a data-preservation step.
+- Adding a new status value in the future requires a new migration that drops and recreates the CHECK constraint. Acceptable: status changes are rare and worth being deliberate about.
+- Same `.sql` text runs on Postgres and MySQL, modulo the existing `TIMESTAMPTZ` / `JSONB` substitutions documented elsewhere.
+
+---
+
+## ADR-008: `updated_at` auto-update via JPA `@PreUpdate`
+
+**Status**: Accepted
+
+**Context**: V1 sets `updated_at` to `now()` on insert via a column default, but nothing bumps it on row updates — so today the column is effectively a duplicate of `created_at`. Two ways to fix that:
+
+1. **JPA `@PreUpdate` lifecycle callback** on the entity. Pure Java, identical behaviour on every database Hibernate supports. Downside: only fires on JPA-managed updates. A direct `UPDATE` issued via `psql` or a raw JDBC script bypasses it.
+2. **Database trigger.** Fires regardless of writer. Downside: the DDL is dialect-specific. Postgres needs a `CREATE FUNCTION ... RETURNS trigger` plus a `CREATE TRIGGER`; MySQL uses a column-level `ON UPDATE CURRENT_TIMESTAMP` attribute. So we'd carry per-DB migration files for this single behaviour.
+
+**Decision**: Use `@PreUpdate` in the JPA entity (added in Phase 2). No DB trigger, no `ON UPDATE` attribute. Migrations stay dialect-agnostic.
+
+**Consequences**:
+- Atlas's source-of-truth principle (architecture.md: "All service inventory data lives here. Changes flow DB → Confluence, never the other direction") means the application is the only sanctioned writer, so the gap doesn't matter operationally.
+- Manual `psql` corrections during development won't bump `updated_at`. Acceptable trade for portability; if it bites, we revisit with a per-dialect trigger migration.
+- Until Phase 2 wires up the entity, `updated_at` will continue to behave as it does today (set on insert, never moved). Schema-layer tests written in Phase 1 will document this gap rather than mask it.
+
+---
+
 ## ADR-007: Pin Spring Boot 4 integration modules explicitly
 
 **Status**: Accepted

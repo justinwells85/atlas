@@ -17,12 +17,12 @@ Phased delivery plan. The goal of the prototype phase is to prove the full pipel
 
 ## Phase 1 — Schema Completion
 
-- [ ] Design and migrate `apis` table
-- [ ] Design and migrate `databases` table
-- [ ] Design and migrate `external_dependencies` table
-- [ ] Design and migrate relationship tables (service_dependencies, service_databases, api_consumers, service_external_deps)
-- [ ] Design and migrate `service_changes` audit table
-- [ ] Resolve open schema decisions (status enum portability, updated_at trigger, JSON query strategy)
+- [x] Design and migrate `apis` table
+- [x] Design and migrate `databases` table
+- [x] Design and migrate `external_dependencies` table
+- [x] Design and migrate relationship tables (service_dependencies, service_databases, api_consumers, service_external_deps)
+- [x] Design and migrate `service_changes` audit table
+- [x] Resolve open schema decisions (ADR-008 updated_at via JPA @PreUpdate, ADR-009 status as TEXT+CHECK, ADR-010 JSON via Hibernate @JdbcTypeCode)
 
 ## Phase 2 — Intake Pipeline
 
