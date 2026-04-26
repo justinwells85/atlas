@@ -37,29 +37,43 @@ Phased delivery plan. The goal of the prototype phase is to prove the full pipel
 
 - [ ] Spring AI MCP server scaffold (`spring-ai-starter-mcp-server`)
 - [ ] `search_services` tool
-- [ ] `get_service_details` tool
-- [ ] `update_service` tool
+- [ ] `get_service_details` tool — response includes joined relationship data (APIs, dependencies, databases) read-only
+- [ ] `update_service` tool — covers `services`-row columns only; relationship-table writes are out of scope for Phase 3 (see Phase 3.5)
 - [ ] `list_services` tool
 - [ ] Tests: MCP tool contract tests, no implementation coupling
 
+## Phase 3.5 — Capture relationship data
+
+Discovery during Phase 2: the intake interview captures 4 of 17 `services` columns and zero rows in any relationship table (`apis`, `service_dependencies`, `service_databases`, `api_consumers`, `service_external_deps`). The Phase 4 Confluence page template explicitly has APIs and Dependencies sections — without populated relationship data, rendered pages will be skeletons.
+
+- [ ] Extend intake interview to capture remaining `services`-row fields (language, framework, repo_url, deployment, support_contact, sla, notes)
+- [ ] Extend intake to capture APIs exposed by the service (writes to `apis`)
+- [ ] Extend intake to capture upstream/downstream service dependencies (writes to `service_dependencies` with directed edges)
+- [ ] Extend intake to capture databases used and ownership (writes to `service_databases`, with `is_owner` flag)
+- [ ] Extend intake to capture external/third-party dependencies (writes to `service_external_deps`)
+- [ ] Tests: behavior-focused, exercise the relationship-capture paths end-to-end
+
 ## Phase 4 — Confluence Sync
 
+- [ ] Credential discovery upfront: identify Confluence base URL, API token, target space, and page hierarchy *before* writing client code (avoid Phase 2's env-var-into-non-interactive-shell back-and-forth)
 - [ ] Atlassian Confluence API client
-- [ ] Page template renderer (DB record → Confluence storage format)
+- [ ] Page template renderer (DB record → Confluence storage format) — handles missing relationship data gracefully (thin sections, not errors)
 - [ ] Sync logic (create new page, update existing, track sync timestamp)
 - [ ] Scheduled job for periodic syncs
 - [ ] Tests: sync agent against a mocked Confluence API at the architectural seam
 
 ## Phase 5 — End-to-End Validation
 
+- [ ] Define "demo-ready service shape" as entry criterion (which fields and relationship rows must be populated for a representative demo) before kicking off this phase
 - [ ] Pick one real service, run intake → DB → MCP → Confluence end-to-end
-- [ ] Verify Confluence page renders correctly
+- [ ] Verify Confluence page renders correctly with all expected sections populated
 - [ ] Verify update path: change a field, re-sync, confirm Confluence reflects change
 - [ ] Document any rough edges discovered
 
 ## Phase 6 — Demo and Handoff
 
 - [ ] Demo the working prototype to stakeholders
+- [ ] Produce `docs/deferred-decisions.md` capturing prototype shortcuts the production team must address: auth model, network binding (`127.0.0.1`-only today), session-state strategy, secret handling, JSON-filter-in-Java pattern (ADR-010 escape hatch), and anything else surfaced during Phases 3–5
 - [ ] Document AWS migration plan (RDS, deployment, secrets management)
 - [ ] Handoff packet for the team taking it to production
 
