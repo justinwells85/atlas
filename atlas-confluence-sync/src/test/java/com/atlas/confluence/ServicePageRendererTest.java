@@ -128,7 +128,9 @@ class ServicePageRendererTest {
                 .contains("No upstream services documented")
                 .contains("No downstream services documented")
                 .contains("No databases documented")
-                .contains("No external dependencies documented");
+                .contains("No external dependencies documented")
+                .contains("No technical details documented")
+                .contains("No operational details documented");
     }
 
     @Test

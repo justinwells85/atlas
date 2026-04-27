@@ -51,6 +51,11 @@ public class ServicePageRenderer {
     private void renderTechnicalDetails(StringBuilder sb, ServicePageContext ctx) {
         Service s = ctx.service();
         sb.append("<h2>Technical Details</h2>\n");
+        if (!hasText(s.getLanguage()) && !hasText(s.getFramework())
+                && !hasText(s.getRepoUrl()) && !hasText(s.getDeployment())) {
+            appendThinNote(sb, "No technical details documented yet.");
+            return;
+        }
         appendField(sb, "Language", s.getLanguage());
         appendField(sb, "Framework", s.getFramework());
         if (hasText(s.getRepoUrl())) {
@@ -197,6 +202,10 @@ public class ServicePageRenderer {
     private void renderOperational(StringBuilder sb, ServicePageContext ctx) {
         Service s = ctx.service();
         sb.append("<h2>Operational</h2>\n");
+        if (!hasText(s.getSupportContact()) && !hasText(s.getSla()) && !hasText(s.getNotes())) {
+            appendThinNote(sb, "No operational details documented yet.");
+            return;
+        }
         appendField(sb, "Support Contact", s.getSupportContact());
         appendField(sb, "SLA", s.getSla());
         if (hasText(s.getNotes())) {
