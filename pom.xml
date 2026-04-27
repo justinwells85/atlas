@@ -23,6 +23,7 @@
         <module>atlas-domain</module>
         <module>atlas-intake</module>
         <module>atlas-mcp</module>
+        <module>atlas-confluence-sync</module>
     </modules>
 
     <properties>
