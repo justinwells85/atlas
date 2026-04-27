@@ -36,6 +36,11 @@
         </dependency>
 
         <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
@@ -62,6 +67,20 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!--
+                        The MCP SDK / Reactor pull non-daemon threads into the
+                        test JVM that don't drain on System.exit(0); without this
+                        cap, Surefire waits the default 30s before force-killing.
+                        5s gives Spring's graceful shutdown room to finish, then
+                        we move on.
+                    -->
+                    <forkedProcessExitTimeoutInSeconds>5</forkedProcessExitTimeoutInSeconds>
+                </configuration>
             </plugin>
         </plugins>
     </build>
