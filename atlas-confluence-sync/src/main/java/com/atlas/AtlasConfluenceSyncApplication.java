@@ -2,6 +2,7 @@ package com.atlas;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Atlas Confluence Sync Agent. Reads service data from the Atlas DB and writes
@@ -13,6 +14,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * ({@code com.atlas.services}).
  */
 @SpringBootApplication
+@EnableScheduling
 public class AtlasConfluenceSyncApplication {
     public static void main(String[] args) {
         SpringApplication.run(AtlasConfluenceSyncApplication.class, args);

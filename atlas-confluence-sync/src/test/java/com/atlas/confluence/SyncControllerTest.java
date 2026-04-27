@@ -50,6 +50,7 @@ class SyncControllerTest {
         registry.add("atlas.confluence.email", () -> "test@example.com");
         registry.add("atlas.confluence.api-token", () -> "test-token");
         registry.add("atlas.confluence.space-key", () -> "ATLAS");
+        registry.add("atlas.confluence.sync.cron", () -> "-");
     }
 
     @Autowired
