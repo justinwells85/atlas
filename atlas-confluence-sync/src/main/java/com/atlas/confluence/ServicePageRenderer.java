@@ -1,5 +1,7 @@
 package com.atlas.confluence;
 
+import com.atlas.services.ApiConsumer;
+import com.atlas.services.ChangeEntry;
 import com.atlas.services.DatabaseUsage;
 import com.atlas.services.ExternalDependencyUsage;
 import com.atlas.services.Service;

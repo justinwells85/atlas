@@ -3,6 +3,7 @@ package com.atlas.services;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -184,6 +185,34 @@ public class ServiceRelationshipsRepository {
                         rs.getBoolean("is_owner"),
                         rs.getString("description")),
                 serviceId);
+    }
+
+    public List<ApiConsumer> findApiConsumersFor(UUID apiId) {
+        return jdbc.query(
+                "SELECT ac.consumer_service_id, s.name AS consumer_name, ac.description " +
+                        "FROM api_consumers ac " +
+                        "JOIN services s ON ac.consumer_service_id = s.id " +
+                        "WHERE ac.api_id = ? " +
+                        "ORDER BY s.name",
+                (rs, i) -> new ApiConsumer(
+                        (UUID) rs.getObject("consumer_service_id"),
+                        rs.getString("consumer_name"),
+                        rs.getString("description")),
+                apiId);
+    }
+
+    public List<ChangeEntry> findRecentChangesFor(UUID serviceId, int limit) {
+        return jdbc.query(
+                "SELECT changed_at, changed_by, change_type, summary " +
+                        "FROM service_changes " +
+                        "WHERE service_id = ? " +
+                        "ORDER BY changed_at DESC LIMIT ?",
+                (rs, i) -> new ChangeEntry(
+                        rs.getObject("changed_at", OffsetDateTime.class),
+                        rs.getString("changed_by"),
+                        rs.getString("change_type"),
+                        rs.getString("summary")),
+                serviceId, limit);
     }
 
     public List<ExternalDependencyUsage> findExternalDependenciesFor(UUID serviceId) {

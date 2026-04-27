@@ -1,5 +1,6 @@
 package com.atlas.confluence;
 
+import com.atlas.services.ApiConsumer;
 import com.atlas.services.ApiSummary;
 
 import java.util.List;

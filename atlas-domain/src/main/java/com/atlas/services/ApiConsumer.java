@@ -1,4 +1,4 @@
-package com.atlas.confluence;
+package com.atlas.services;
 
 import java.util.UUID;
 
