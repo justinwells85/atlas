@@ -14,9 +14,9 @@ import org.springframework.context.annotation.Configuration;
 public class McpToolsConfig {
 
     @Bean
-    ToolCallbackProvider atlasMcpTools(PingTool pingTool) {
+    ToolCallbackProvider atlasMcpTools(PingTool pingTool, ServiceTools serviceTools) {
         return MethodToolCallbackProvider.builder()
-                .toolObjects(pingTool)
+                .toolObjects(pingTool, serviceTools)
                 .build();
     }
 }

@@ -34,6 +34,7 @@ Both Spring Boot apps load Flyway autoconfig; both run migrations on startup. Fl
 - `AtlasApplication` is renamed to `AtlasIntakeApplication`. `AtlasApplicationSmokeTest` becomes `AtlasIntakeApplicationSmokeTest`. Schema and repository tests move to `atlas-domain` and boot the test-only `DomainTestApplication`. All 38 Phase 2 tests pass in their new homes.
 - Two embedded Tomcats run side-by-side in local dev. Both bind to `127.0.0.1` per ADR-011, on distinct ports. Auth is still deferred until either app goes off `127.0.0.1` (per ADR-011's deferred-work register).
 - Future modules (e.g., `atlas-confluence-sync` in Phase 4) follow the same pattern: depend on `atlas-domain`, declare their own integration modules, run on their own port.
+- Boot classes live at the `com.atlas` package root (`AtlasIntakeApplication`, `McpServerApplication`) — not in a deeper sub-package — so default Spring Boot scanning picks up the shared JPA entities and repositories at `com.atlas.services`. Spring Boot 4 removed the `@EntityScan` annotation, so a boot class in a deeper package no longer has an annotation-only fallback. Discovered the hard way during M2: an MCP boot class at `com.atlas.mcp` failed to find `ServiceRepository` with `NoSuchBeanDefinitionException`, and the Spring Boot 3 fix (`@EntityScan(basePackages = "com.atlas.services")`) doesn't compile under Spring Boot 4.
 
 ---
 
