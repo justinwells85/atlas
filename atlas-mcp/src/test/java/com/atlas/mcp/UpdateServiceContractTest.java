@@ -40,10 +40,16 @@ class UpdateServiceContractTest {
     @Autowired
     ServiceRepository services;
 
+    @Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     private final ObjectMapper json = new ObjectMapper();
 
     @BeforeEach
     void wipe() {
+        // service_changes has a soft FK on service_id (no cascade); clean it
+        // explicitly so audit-row tests see a fresh slate.
+        jdbc.update("DELETE FROM service_changes");
         services.deleteAll();
     }
 
@@ -157,6 +163,37 @@ class UpdateServiceContractTest {
         assertThat(body.get("metadata").get("compliance").asText()).isEqualTo("soc2");
         // Old keys are gone — replace, not merge.
         assertThat(body.get("metadata").has("team")).isFalse();
+    }
+
+    @Test
+    void whenSomethingChanges_thenServiceChangeAuditRowIsWritten() throws Exception {
+        Service saved = services.saveAndFlush(svc("orders-api", "orders", ServiceStatus.ACTIVE));
+
+        update(Map.of(
+                "serviceId", saved.getId().toString(),
+                "language", "Java",
+                "framework", "Spring Boot"));
+
+        java.util.List<java.util.Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT change_type, changed_by, summary FROM service_changes WHERE service_id = ?",
+                saved.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).get("change_type")).isEqualTo("updated");
+        assertThat(rows.get(0).get("changed_by")).isEqualTo("mcp-update_service");
+        String summary = (String) rows.get(0).get("summary");
+        assertThat(summary).contains("language").contains("framework");
+    }
+
+    @Test
+    void whenPatchIsEmpty_thenNoServiceChangeAuditRowIsWritten() throws Exception {
+        Service saved = services.saveAndFlush(svc("orders-api", "orders", ServiceStatus.ACTIVE));
+
+        update(Map.of("serviceId", saved.getId().toString()));
+
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM service_changes WHERE service_id = ?",
+                Long.class, saved.getId());
+        assertThat(count).isEqualTo(0L);
     }
 
     private JsonNode update(Map<String, Object> args) throws Exception {

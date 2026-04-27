@@ -53,10 +53,13 @@ class InterviewServiceTest {
         // rows from previous methods so unique-name collisions and FK-cascade
         // leftovers don't leak between tests. Order matters: link rows first,
         // then leaf entities, then services (FK cascade catches the rest).
+        // service_changes has a soft FK on service_id (no CASCADE) — clean it
+        // explicitly so the audit-row test sees a clean slate.
         jdbc.update("DELETE FROM service_external_deps");
         jdbc.update("DELETE FROM service_databases");
         jdbc.update("DELETE FROM external_dependencies");
         jdbc.update("DELETE FROM databases");
+        jdbc.update("DELETE FROM service_changes");
         repository.deleteAll();
     }
 
@@ -205,6 +208,7 @@ class InterviewServiceTest {
         r = interviewService.next(r.state(), "POST");
         r = interviewService.next(r.state(), "api-key");
         r = interviewService.next(r.state(), "Place an order");
+        r = interviewService.next(r.state(), "skip");               // consumers sub-gate
         r = interviewService.next(r.state(), "no");                 // another?
         r = skipDependencyAndStorageSections(r);
 
@@ -227,12 +231,14 @@ class InterviewServiceTest {
         r = interviewService.next(r.state(), "GET");
         r = interviewService.next(r.state(), "skip");                // auth optional
         r = interviewService.next(r.state(), "List inventory items");
+        r = interviewService.next(r.state(), "skip");                // consumers sub-gate
         r = interviewService.next(r.state(), "yes");                 // another?
         // Second API
         r = interviewService.next(r.state(), "/v1/items/{id}");
         r = interviewService.next(r.state(), "GET");
         r = interviewService.next(r.state(), "");                    // auth empty also skips
         r = interviewService.next(r.state(), "skip");                // description optional
+        r = interviewService.next(r.state(), "skip");                // consumers sub-gate
         r = interviewService.next(r.state(), "no");                  // another?
         r = skipDependencyAndStorageSections(r);
 
@@ -262,6 +268,127 @@ class InterviewServiceTest {
         // After a valid method, the interview moves on.
         r = interviewService.next(r.state(), "POST");
         assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_API_AUTH);
+    }
+
+    // -----------------------------------------------------------------------
+    // API consumers sub-loop (Phase 3.6)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void whenApiHasOneConsumer_thenApiConsumerRowIsPersisted() {
+        // Pre-existing service to act as the consumer.
+        Service ui = saveSimpleService("storefront-ui", "storefront");
+
+        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
+        r = skipAllOptionalServicesRowFields(r);
+        r = interviewService.next(r.state(), "yes");                 // APIs gate
+        r = interviewService.next(r.state(), "/v1/orders");
+        r = interviewService.next(r.state(), "POST");
+        r = interviewService.next(r.state(), "skip");                // auth
+        r = interviewService.next(r.state(), "Place an order");
+        r = interviewService.next(r.state(), "yes");                 // consumers gate
+        r = interviewService.next(r.state(), "storefront-ui");
+        r = interviewService.next(r.state(), "called when user clicks Buy");
+        r = interviewService.next(r.state(), "no");                  // another consumer?
+        r = interviewService.next(r.state(), "no");                  // another API?
+        r = skipDependencyAndStorageSections(r);
+
+        assertThat(r.complete()).isTrue();
+        var apis = relationships.findApisFor(r.serviceId());
+        assertThat(apis).hasSize(1);
+        java.util.UUID apiId = apis.get(0).id();
+        Long consumerCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM api_consumers WHERE api_id = ? AND consumer_service_id = ?",
+                Long.class, apiId, ui.getId());
+        assertThat(consumerCount).isEqualTo(1L);
+        String description = jdbc.queryForObject(
+                "SELECT description FROM api_consumers WHERE api_id = ?",
+                String.class, apiId);
+        assertThat(description).isEqualTo("called when user clicks Buy");
+    }
+
+    @Test
+    void whenApiHasMultipleConsumers_thenAllPersist() {
+        saveSimpleService("storefront-ui", "storefront");
+        saveSimpleService("admin-ui", "platform");
+
+        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
+        r = skipAllOptionalServicesRowFields(r);
+        r = interviewService.next(r.state(), "yes");                 // APIs gate
+        r = interviewService.next(r.state(), "/v1/orders");
+        r = interviewService.next(r.state(), "GET");
+        r = interviewService.next(r.state(), "skip");                // auth
+        r = interviewService.next(r.state(), "List orders");
+        r = interviewService.next(r.state(), "yes");                 // consumers gate
+        r = interviewService.next(r.state(), "storefront-ui");
+        r = interviewService.next(r.state(), "user order history");
+        r = interviewService.next(r.state(), "yes");                 // another consumer?
+        r = interviewService.next(r.state(), "admin-ui");
+        r = interviewService.next(r.state(), "ops dashboard");
+        r = interviewService.next(r.state(), "no");                  // another consumer?
+        r = interviewService.next(r.state(), "no");                  // another API?
+        r = skipDependencyAndStorageSections(r);
+
+        assertThat(r.complete()).isTrue();
+        var apis = relationships.findApisFor(r.serviceId());
+        assertThat(apis).hasSize(1);
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM api_consumers WHERE api_id = ?",
+                Long.class, apis.get(0).id());
+        assertThat(count).isEqualTo(2L);
+    }
+
+    @Test
+    void whenApiConsumerReferencesUnknownService_thenInterviewReprompts() {
+        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
+        r = skipAllOptionalServicesRowFields(r);
+        r = interviewService.next(r.state(), "yes");
+        r = interviewService.next(r.state(), "/v1/orders");
+        r = interviewService.next(r.state(), "POST");
+        r = interviewService.next(r.state(), "skip");
+        r = interviewService.next(r.state(), "skip");
+        r = interviewService.next(r.state(), "yes");                 // consumers gate
+        r = interviewService.next(r.state(), "no-such-consumer");
+
+        assertThat(r.complete()).isFalse();
+        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_API_CONSUMER_NAME);
+        assertThat(r.question()).contains("No service named 'no-such-consumer'");
+    }
+
+    @Test
+    void whenApiConsumerIsSelfReference_thenInterviewReprompts() {
+        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
+        r = skipAllOptionalServicesRowFields(r);
+        r = interviewService.next(r.state(), "yes");
+        r = interviewService.next(r.state(), "/v1/orders");
+        r = interviewService.next(r.state(), "POST");
+        r = interviewService.next(r.state(), "skip");
+        r = interviewService.next(r.state(), "skip");
+        r = interviewService.next(r.state(), "yes");
+        r = interviewService.next(r.state(), "orders-api");          // self
+
+        assertThat(r.complete()).isFalse();
+        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_API_CONSUMER_NAME);
+        assertThat(r.question()).containsIgnoringCase("can't consume its own");
+    }
+
+    // -----------------------------------------------------------------------
+    // service_changes audit (Phase 3.6)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void whenInterviewCompletes_thenAuditRowIsWritten() {
+        InterviewService.TurnResult r = startWithRequiredFields("audit-svc", "platform");
+        r = skipAllOptionalsAndSections(r);
+
+        assertThat(r.complete()).isTrue();
+        java.util.List<java.util.Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT change_type, changed_by, summary FROM service_changes WHERE service_id = ?",
+                r.serviceId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).get("change_type")).isEqualTo("created");
+        assertThat(rows.get(0).get("changed_by")).isEqualTo("intake-agent");
+        assertThat((String) rows.get(0).get("summary")).contains("intake interview");
     }
 
     // -----------------------------------------------------------------------

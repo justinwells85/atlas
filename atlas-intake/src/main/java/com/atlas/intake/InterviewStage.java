@@ -17,12 +17,17 @@ public enum InterviewStage {
     AWAITING_SLA,
     AWAITING_NOTES,
 
-    // APIs section (M2)
+    // APIs section (M2 / Phase 3.6)
     AWAITING_HAS_APIS,
     AWAITING_API_PATH,
     AWAITING_API_METHOD,
     AWAITING_API_AUTH,
     AWAITING_API_DESCRIPTION,
+    // Consumers sub-loop within each API (Phase 3.6)
+    AWAITING_HAS_API_CONSUMERS,
+    AWAITING_API_CONSUMER_NAME,
+    AWAITING_API_CONSUMER_DESCRIPTION,
+    AWAITING_ANOTHER_API_CONSUMER,
     AWAITING_ANOTHER_API,
 
     // Upstream service-to-service dependencies (M2)

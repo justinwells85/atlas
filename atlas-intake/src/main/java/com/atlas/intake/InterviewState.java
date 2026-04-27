@@ -9,7 +9,8 @@ import java.util.Set;
  * Stateless-turn interview state. Carried in every {@code /api/intake/turn}
  * request body and echoed back in the response (per ADR-011). Holds the
  * services-row draft, optional-stage visit set, and per-section in-progress
- * lists / current item / closed flags for the M2 / M3 relationship sections.
+ * lists / current item / closed flags for the M2 / M3 / 3.6 relationship
+ * sections.
  *
  * Many fields, no abstraction: prototype-scope clarity wins over a generic
  * SectionState type that would complicate JSON round-tripping.
@@ -20,9 +21,12 @@ public record InterviewState(
         boolean descriptionClarified,
         Set<InterviewStage> visitedOptionalStages,
 
-        // APIs section (M2)
+        // APIs section (M2 / 3.6 — the in-progress currentApi accumulates its
+        // own consumers list inline; currentApiConsumer is the in-progress
+        // consumer being built before being appended onto currentApi).
         List<ApiDraft> apis,
         ApiDraft currentApi,
+        ApiConsumerDraft currentApiConsumer,
         boolean apisSectionClosed,
 
         // Upstream / downstream dependency sections (M2)
@@ -58,7 +62,7 @@ public record InterviewState(
     public static InterviewState empty() {
         return new InterviewState(
                 ServiceDraft.empty(), null, false, Set.of(),
-                List.of(), null, false,
+                List.of(), null, null, false,
                 List.of(), null, false,
                 List.of(), null, false,
                 List.of(), null, false,
@@ -70,7 +74,7 @@ public record InterviewState(
 
     public InterviewState withDraft(ServiceDraft d) {
         return new InterviewState(d, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -80,7 +84,7 @@ public record InterviewState(
 
     public InterviewState atStage(InterviewStage s) {
         return new InterviewState(draft, s, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -90,7 +94,7 @@ public record InterviewState(
 
     public InterviewState withDescriptionClarified() {
         return new InterviewState(draft, stage, true, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -100,7 +104,7 @@ public record InterviewState(
 
     public InterviewState withError(String e) {
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -116,7 +120,7 @@ public record InterviewState(
         Set<InterviewStage> next = new LinkedHashSet<>(visitedOptionalStages);
         next.add(s);
         return new InterviewState(draft, stage, descriptionClarified, Set.copyOf(next),
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -132,7 +136,34 @@ public record InterviewState(
 
     public InterviewState withCurrentApi(ApiDraft api) {
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, api, apisSectionClosed,
+                apis, api, currentApiConsumer, apisSectionClosed,
+                upstreamDependencies, currentUpstream, upstreamSectionClosed,
+                downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
+                lastError);
+    }
+
+    public InterviewState withCurrentApiConsumer(ApiConsumerDraft consumer) {
+        return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
+                apis, currentApi, consumer, apisSectionClosed,
+                upstreamDependencies, currentUpstream, upstreamSectionClosed,
+                downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
+                lastError);
+    }
+
+    /**
+     * Append the in-progress consumer onto the current API's consumers list
+     * and clear currentApiConsumer. Caller must ensure currentApi and
+     * currentApiConsumer are both non-null.
+     */
+    public InterviewState commitCurrentApiConsumer() {
+        if (currentApi == null || currentApiConsumer == null) return this;
+        ApiDraft updatedApi = currentApi.withAddedConsumer(currentApiConsumer);
+        return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
+                apis, updatedApi, null, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -145,7 +176,7 @@ public record InterviewState(
         List<ApiDraft> nextApis = new ArrayList<>(apis);
         nextApis.add(currentApi);
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                List.copyOf(nextApis), null, apisSectionClosed,
+                List.copyOf(nextApis), null, null, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -155,7 +186,7 @@ public record InterviewState(
 
     public InterviewState closeApisSection() {
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, null, true,
+                apis, null, null, true,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -167,7 +198,7 @@ public record InterviewState(
 
     public InterviewState withCurrentUpstream(DependencyEdgeDraft d) {
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, d, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -180,7 +211,7 @@ public record InterviewState(
         List<DependencyEdgeDraft> next = new ArrayList<>(upstreamDependencies);
         next.add(currentUpstream);
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 List.copyOf(next), null, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -190,7 +221,7 @@ public record InterviewState(
 
     public InterviewState closeUpstreamSection() {
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, null, true,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -202,7 +233,7 @@ public record InterviewState(
 
     public InterviewState withCurrentDownstream(DependencyEdgeDraft d) {
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, d, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -215,7 +246,7 @@ public record InterviewState(
         List<DependencyEdgeDraft> next = new ArrayList<>(downstreamDependencies);
         next.add(currentDownstream);
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 List.copyOf(next), null, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -225,7 +256,7 @@ public record InterviewState(
 
     public InterviewState closeDownstreamSection() {
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, null, true,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -237,7 +268,7 @@ public record InterviewState(
 
     public InterviewState withCurrentDatabaseUsage(DatabaseUsageDraft d) {
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, d, databasesSectionClosed,
@@ -250,7 +281,7 @@ public record InterviewState(
         List<DatabaseUsageDraft> next = new ArrayList<>(databaseUsages);
         next.add(currentDatabaseUsage);
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 List.copyOf(next), null, databasesSectionClosed,
@@ -260,7 +291,7 @@ public record InterviewState(
 
     public InterviewState closeDatabasesSection() {
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, null, true,
@@ -272,7 +303,7 @@ public record InterviewState(
 
     public InterviewState withCurrentExternalDependencyUsage(ExternalDependencyUsageDraft d) {
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -285,7 +316,7 @@ public record InterviewState(
         List<ExternalDependencyUsageDraft> next = new ArrayList<>(externalDependencyUsages);
         next.add(currentExternalDependencyUsage);
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,
@@ -295,7 +326,7 @@ public record InterviewState(
 
     public InterviewState closeExternalDependenciesSection() {
         return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
-                apis, currentApi, apisSectionClosed,
+                apis, currentApi, currentApiConsumer, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
                 databaseUsages, currentDatabaseUsage, databasesSectionClosed,

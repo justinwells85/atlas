@@ -14,11 +14,14 @@ import java.util.UUID;
 import java.util.function.BiFunction;
 
 import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_API;
+import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_API_CONSUMER;
 import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_DATABASE;
 import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_DOWNSTREAM;
 import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_EXTERNAL_DEP;
 import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_UPSTREAM;
 import static com.atlas.intake.InterviewStage.AWAITING_API_AUTH;
+import static com.atlas.intake.InterviewStage.AWAITING_API_CONSUMER_DESCRIPTION;
+import static com.atlas.intake.InterviewStage.AWAITING_API_CONSUMER_NAME;
 import static com.atlas.intake.InterviewStage.AWAITING_API_DESCRIPTION;
 import static com.atlas.intake.InterviewStage.AWAITING_API_METHOD;
 import static com.atlas.intake.InterviewStage.AWAITING_API_PATH;
@@ -35,6 +38,7 @@ import static com.atlas.intake.InterviewStage.AWAITING_EXTERNAL_DEP_LINK_DESCRIP
 import static com.atlas.intake.InterviewStage.AWAITING_EXTERNAL_DEP_NAME;
 import static com.atlas.intake.InterviewStage.AWAITING_EXTERNAL_DEP_URL;
 import static com.atlas.intake.InterviewStage.AWAITING_FRAMEWORK;
+import static com.atlas.intake.InterviewStage.AWAITING_HAS_API_CONSUMERS;
 import static com.atlas.intake.InterviewStage.AWAITING_HAS_APIS;
 import static com.atlas.intake.InterviewStage.AWAITING_HAS_DATABASES;
 import static com.atlas.intake.InterviewStage.AWAITING_HAS_DOWNSTREAM_DEPS;
@@ -205,6 +209,15 @@ public class InterviewService {
                     "Auth method? (e.g., 'api-key', 'oauth2', or 'skip')");
             case AWAITING_API_DESCRIPTION -> askWithError(s,
                     "Brief description of this endpoint? (or 'skip')");
+            case AWAITING_HAS_API_CONSUMERS -> askWithError(s,
+                    "Does any other service consume '" + s.currentApi().path() + "'? (yes/skip)");
+            case AWAITING_API_CONSUMER_NAME -> askWithError(s,
+                    "Name of a service that calls '" + s.currentApi().path() + "'?");
+            case AWAITING_API_CONSUMER_DESCRIPTION -> askWithError(s,
+                    "How does '" + s.currentApiConsumer().consumerServiceName()
+                            + "' use '" + s.currentApi().path() + "'? (or 'skip')");
+            case AWAITING_ANOTHER_API_CONSUMER -> askWithError(s,
+                    "Any other consumers of '" + s.currentApi().path() + "'? (yes/no)");
             case AWAITING_ANOTHER_API -> askWithError(s, "Add another API endpoint? (yes/no)");
             default -> throw new IllegalStateException("Unexpected stage in APIs section: " + s.stage());
         };
@@ -339,11 +352,32 @@ public class InterviewService {
                         .atStage(AWAITING_API_DESCRIPTION).clearError();
             }
             case AWAITING_API_DESCRIPTION -> {
+                // Don't commit currentApi yet — we still need to walk the
+                // consumers sub-loop. commitCurrentApi() happens when the
+                // consumers section closes (gate=no or another?=no).
                 String value = isOptionalSkip(trimmed) ? null : trimmed;
                 yield s.withCurrentApi(s.currentApi().withDescription(value))
-                        .commitCurrentApi()
-                        .atStage(AWAITING_ANOTHER_API).clearError();
+                        .atStage(AWAITING_HAS_API_CONSUMERS).clearError();
             }
+            case AWAITING_HAS_API_CONSUMERS -> {
+                boolean yes = isYes(trimmed);
+                boolean no = isNo(trimmed) || trimmed.isEmpty();
+                if (!yes && !no) yield s.withError("Please answer yes or skip.");
+                yield (yes
+                        ? s.withCurrentApiConsumer(ApiConsumerDraft.empty()).atStage(AWAITING_API_CONSUMER_NAME)
+                        : s.commitCurrentApi().atStage(AWAITING_ANOTHER_API))
+                        .clearError();
+            }
+            case AWAITING_API_CONSUMER_NAME -> applyApiConsumerName(s, trimmed);
+            case AWAITING_API_CONSUMER_DESCRIPTION -> {
+                String value = isOptionalSkip(trimmed) ? null : trimmed;
+                yield s.withCurrentApiConsumer(s.currentApiConsumer().withDescription(value))
+                        .commitCurrentApiConsumer()
+                        .atStage(AWAITING_ANOTHER_API_CONSUMER).clearError();
+            }
+            case AWAITING_ANOTHER_API_CONSUMER -> applyAnother(s, trimmed,
+                    yes -> yes ? s.withCurrentApiConsumer(ApiConsumerDraft.empty()).atStage(AWAITING_API_CONSUMER_NAME)
+                               : s.commitCurrentApi().atStage(AWAITING_ANOTHER_API));
             case AWAITING_ANOTHER_API -> applyAnother(s, trimmed,
                     yes -> yes ? s.withCurrentApi(ApiDraft.empty()).atStage(AWAITING_API_PATH)
                                : s.closeApisSection());
@@ -476,6 +510,30 @@ public class InterviewService {
     }
 
     /**
+     * API-consumer name input. Looks up the named service; rejects unknown,
+     * self-as-consumer, and duplicates within the current API's consumers list.
+     * On success, sets the current consumer's id+name and advances to its
+     * description sub-stage.
+     */
+    private InterviewState applyApiConsumerName(InterviewState s, String name) {
+        if (name.isEmpty()) {
+            return s.withError("Service name cannot be blank.");
+        }
+        if (name.equals(s.draft().name())) {
+            return s.withError("A service can't consume its own API.");
+        }
+        if (s.currentApi().consumers().stream().anyMatch(c -> name.equals(c.consumerServiceName()))) {
+            return s.withError("'" + name + "' is already a listed consumer of this API.");
+        }
+        Optional<Service> other = repository.findByName(name);
+        if (other.isEmpty()) {
+            return s.withError("No service named '" + name + "' exists.");
+        }
+        return s.withCurrentApiConsumer(s.currentApiConsumer().withConsumer(other.get().getId(), name))
+                .atStage(AWAITING_API_CONSUMER_DESCRIPTION).clearError();
+    }
+
+    /**
      * Database-name input (lookup-or-create). Rejects blank and duplicates;
      * on lookup hit, jumps past the engine stage straight to is_owner; on
      * miss, leaves databaseId null and advances to engine.
@@ -577,8 +635,11 @@ public class InterviewService {
         UUID serviceId = saved.getId();
 
         for (ApiDraft api : s.apis()) {
-            relationships.insertApi(serviceId, api.path(), api.method(),
+            UUID apiId = relationships.insertApi(serviceId, api.path(), api.method(),
                     api.authMethod(), api.description());
+            for (ApiConsumerDraft consumer : api.consumers()) {
+                relationships.insertApiConsumer(apiId, consumer.consumerServiceId(), consumer.description());
+            }
         }
         for (DependencyEdgeDraft edge : s.upstreamDependencies()) {
             // Captured as "this depends on other" — other is upstream, this is downstream.
@@ -601,6 +662,9 @@ public class InterviewService {
                     : usage.externalDependencyId();
             relationships.insertServiceExternalDepLink(serviceId, externalDepId, usage.description());
         }
+
+        relationships.insertServiceChange(serviceId, "intake-agent", "created",
+                "Service registered via intake interview.");
 
         return new TurnResult(s.clearError(), null, true, serviceId);
     }

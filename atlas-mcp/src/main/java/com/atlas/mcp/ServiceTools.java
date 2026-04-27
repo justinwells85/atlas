@@ -11,6 +11,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -114,23 +115,23 @@ public class ServiceTools {
         Service svc = services.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("No service with id " + id));
 
-        boolean changed = false;
-        if (name != null) { svc.setName(name); changed = true; }
-        if (description != null) { svc.setDescription(description); changed = true; }
-        if (ownerTeam != null) { svc.setOwnerTeam(ownerTeam); changed = true; }
-        if (status != null) { svc.setStatus(parseStatus(status)); changed = true; }
-        if (language != null) { svc.setLanguage(language); changed = true; }
-        if (framework != null) { svc.setFramework(framework); changed = true; }
-        if (repoUrl != null) { svc.setRepoUrl(repoUrl); changed = true; }
-        if (deployment != null) { svc.setDeployment(deployment); changed = true; }
-        if (supportContact != null) { svc.setSupportContact(supportContact); changed = true; }
-        if (sla != null) { svc.setSla(sla); changed = true; }
-        if (notes != null) { svc.setNotes(notes); changed = true; }
-        if (metadata != null) { svc.setMetadata(metadata); changed = true; }
-        if (confluencePageId != null) { svc.setConfluencePageId(confluencePageId); changed = true; }
-        if (lastSyncedToConfluence != null) { svc.setLastSyncedToConfluence(lastSyncedToConfluence); changed = true; }
+        List<String> changedFields = new ArrayList<>();
+        if (name != null) { svc.setName(name); changedFields.add("name"); }
+        if (description != null) { svc.setDescription(description); changedFields.add("description"); }
+        if (ownerTeam != null) { svc.setOwnerTeam(ownerTeam); changedFields.add("ownerTeam"); }
+        if (status != null) { svc.setStatus(parseStatus(status)); changedFields.add("status"); }
+        if (language != null) { svc.setLanguage(language); changedFields.add("language"); }
+        if (framework != null) { svc.setFramework(framework); changedFields.add("framework"); }
+        if (repoUrl != null) { svc.setRepoUrl(repoUrl); changedFields.add("repoUrl"); }
+        if (deployment != null) { svc.setDeployment(deployment); changedFields.add("deployment"); }
+        if (supportContact != null) { svc.setSupportContact(supportContact); changedFields.add("supportContact"); }
+        if (sla != null) { svc.setSla(sla); changedFields.add("sla"); }
+        if (notes != null) { svc.setNotes(notes); changedFields.add("notes"); }
+        if (metadata != null) { svc.setMetadata(metadata); changedFields.add("metadata"); }
+        if (confluencePageId != null) { svc.setConfluencePageId(confluencePageId); changedFields.add("confluencePageId"); }
+        if (lastSyncedToConfluence != null) { svc.setLastSyncedToConfluence(lastSyncedToConfluence); changedFields.add("lastSyncedToConfluence"); }
 
-        if (changed) {
+        if (!changedFields.isEmpty()) {
             try {
                 svc = services.saveAndFlush(svc);
             } catch (DataIntegrityViolationException e) {
@@ -139,6 +140,8 @@ public class ServiceTools {
                 // instead of failing later at transaction commit.
                 throw new IllegalArgumentException("Update violated a database constraint: " + e.getMostSpecificCause().getMessage(), e);
             }
+            relationships.insertServiceChange(id, "mcp-update_service", "updated",
+                    "Fields updated: " + String.join(", ", changedFields));
         }
         return toDetails(svc);
     }

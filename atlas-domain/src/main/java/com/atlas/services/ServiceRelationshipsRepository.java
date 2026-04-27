@@ -36,6 +36,29 @@ public class ServiceRelationshipsRepository {
         return id;
     }
 
+    /** Insert one row in {@code api_consumers} linking an API to a consumer service. */
+    public void insertApiConsumer(UUID apiId, UUID consumerServiceId, String description) {
+        jdbc.update(
+                "INSERT INTO api_consumers (api_id, consumer_service_id, description) " +
+                        "VALUES (?, ?, ?)",
+                apiId, consumerServiceId, description);
+    }
+
+    /**
+     * Insert one row in {@code service_changes} (audit). {@code changedBy} is a
+     * static label for now ("intake-agent", "mcp-update_service") — switches to
+     * the authenticated principal when auth lands. {@code before} and
+     * {@code after} JSON snapshots are left null for the prototype; adding them
+     * is a follow-up if/when richer change views are needed.
+     */
+    public void insertServiceChange(UUID serviceId, String changedBy,
+                                    String changeType, String summary) {
+        jdbc.update(
+                "INSERT INTO service_changes (service_id, changed_by, change_type, summary) " +
+                        "VALUES (?, ?, ?, ?)",
+                serviceId, changedBy, changeType, summary);
+    }
+
     /** Insert one directed edge in {@code service_dependencies}. */
     public void insertServiceDependency(UUID upstreamServiceId, UUID downstreamServiceId,
                                         String description) {
