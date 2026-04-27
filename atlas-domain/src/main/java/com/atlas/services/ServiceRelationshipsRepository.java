@@ -40,9 +40,9 @@ public class ServiceRelationshipsRepository {
     /** Insert one row in {@code api_consumers} linking an API to a consumer service. */
     public void insertApiConsumer(UUID apiId, UUID consumerServiceId, String description) {
         jdbc.update(
-                "INSERT INTO api_consumers (api_id, consumer_service_id, description) " +
-                        "VALUES (?, ?, ?)",
-                apiId, consumerServiceId, description);
+                "INSERT INTO api_consumers (id, api_id, consumer_service_id, description) " +
+                        "VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), apiId, consumerServiceId, description);
     }
 
     /**
@@ -55,9 +55,9 @@ public class ServiceRelationshipsRepository {
     public void insertServiceChange(UUID serviceId, String changedBy,
                                     String changeType, String summary) {
         jdbc.update(
-                "INSERT INTO service_changes (service_id, changed_by, change_type, summary) " +
-                        "VALUES (?, ?, ?, ?)",
-                serviceId, changedBy, changeType, summary);
+                "INSERT INTO service_changes (id, service_id, changed_by, change_type, summary) " +
+                        "VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), serviceId, changedBy, changeType, summary);
     }
 
     /** Insert one directed edge in {@code service_dependencies}. */
@@ -65,25 +65,25 @@ public class ServiceRelationshipsRepository {
                                         String description) {
         jdbc.update(
                 "INSERT INTO service_dependencies " +
-                        "(upstream_service_id, downstream_service_id, description) " +
-                        "VALUES (?, ?, ?)",
-                upstreamServiceId, downstreamServiceId, description);
+                        "(id, upstream_service_id, downstream_service_id, description) " +
+                        "VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), upstreamServiceId, downstreamServiceId, description);
     }
 
     /** Lookup an existing database by name. */
     public Optional<UUID> findDatabaseIdByName(String name) {
         List<UUID> ids = jdbc.query(
-                "SELECT id FROM databases WHERE name = ?",
+                "SELECT id FROM data_stores WHERE name = ?",
                 (rs, i) -> (UUID) rs.getObject("id"),
                 name);
         return ids.isEmpty() ? Optional.empty() : Optional.of(ids.get(0));
     }
 
-    /** Insert one row in {@code databases}. Returns the generated id. */
+    /** Insert one row in {@code data_stores} (the schema's name for the databases entity). Returns the generated id. */
     public UUID insertDatabase(String name, String engine) {
         UUID id = UUID.randomUUID();
         jdbc.update(
-                "INSERT INTO databases (id, name, engine) VALUES (?, ?, ?)",
+                "INSERT INTO data_stores (id, name, engine) VALUES (?, ?, ?)",
                 id, name, engine);
         return id;
     }
@@ -93,9 +93,9 @@ public class ServiceRelationshipsRepository {
                                           boolean isOwner, String description) {
         jdbc.update(
                 "INSERT INTO service_databases " +
-                        "(service_id, database_id, is_owner, description) " +
-                        "VALUES (?, ?, ?, ?)",
-                serviceId, databaseId, isOwner, description);
+                        "(id, service_id, database_id, is_owner, description) " +
+                        "VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), serviceId, databaseId, isOwner, description);
     }
 
     /** Lookup an existing external dependency by name. */
@@ -121,9 +121,9 @@ public class ServiceRelationshipsRepository {
                                              String description) {
         jdbc.update(
                 "INSERT INTO service_external_deps " +
-                        "(service_id, external_dependency_id, description) " +
-                        "VALUES (?, ?, ?)",
-                serviceId, externalDependencyId, description);
+                        "(id, service_id, external_dependency_id, description) " +
+                        "VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), serviceId, externalDependencyId, description);
     }
 
     // --- Reads (Phase 3) ----------------------------------------------------
@@ -175,7 +175,7 @@ public class ServiceRelationshipsRepository {
         return jdbc.query(
                 "SELECT db.id, db.name, db.engine, sdb.is_owner, sdb.description " +
                         "FROM service_databases sdb " +
-                        "JOIN databases db ON sdb.database_id = db.id " +
+                        "JOIN data_stores db ON sdb.database_id = db.id " +
                         "WHERE sdb.service_id = ? " +
                         "ORDER BY db.name",
                 (rs, i) -> new DatabaseUsage(

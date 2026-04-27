@@ -2,12 +2,12 @@
 -- Supports the "Consumers of this API" section of the Confluence template.
 
 CREATE TABLE api_consumers (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                      UUID PRIMARY KEY,
     api_id                  UUID NOT NULL REFERENCES apis(id) ON DELETE CASCADE,
     consumer_service_id     UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     description             TEXT,
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT api_consumers_pair_unique UNIQUE (api_id, consumer_service_id)
 );
 

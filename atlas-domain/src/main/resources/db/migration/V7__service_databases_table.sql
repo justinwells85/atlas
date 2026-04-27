@@ -4,13 +4,13 @@
 -- sections of the Confluence template.
 
 CREATE TABLE service_databases (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID PRIMARY KEY,
     service_id      UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-    database_id     UUID NOT NULL REFERENCES databases(id) ON DELETE CASCADE,
+    database_id     UUID NOT NULL REFERENCES data_stores(id) ON DELETE CASCADE,
     is_owner        BOOLEAN NOT NULL DEFAULT FALSE,
     description     TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT service_databases_pair_unique UNIQUE (service_id, database_id)
 );
 

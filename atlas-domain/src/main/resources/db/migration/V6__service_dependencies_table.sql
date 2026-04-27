@@ -4,12 +4,12 @@
 -- twice (UNIQUE). Cascade on either side: removing a service drops its edges.
 
 CREATE TABLE service_dependencies (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                      UUID PRIMARY KEY,
     upstream_service_id     UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     downstream_service_id   UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     description             TEXT,
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT service_dependencies_no_self_edge
         CHECK (upstream_service_id <> downstream_service_id),
     CONSTRAINT service_dependencies_pair_unique

@@ -37,9 +37,9 @@ class RelationshipAndAuditSchemaTest {
 
         jdbcTemplate.update(
                 "INSERT INTO service_dependencies " +
-                        "(upstream_service_id, downstream_service_id, description) " +
-                        "VALUES (?, ?, ?)",
-                upstream, downstream, "downstream calls upstream's REST API");
+                        "(id, upstream_service_id, downstream_service_id, description) " +
+                        "VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), upstream, downstream, "downstream calls upstream's REST API");
 
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM service_dependencies " +
@@ -54,8 +54,8 @@ class RelationshipAndAuditSchemaTest {
 
         assertThatThrownBy(() -> jdbcTemplate.update(
                 "INSERT INTO service_dependencies " +
-                        "(upstream_service_id, downstream_service_id) VALUES (?, ?)",
-                svc, svc))
+                        "(id, upstream_service_id, downstream_service_id) VALUES (?, ?, ?)",
+                UUID.randomUUID(), svc, svc))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -65,13 +65,13 @@ class RelationshipAndAuditSchemaTest {
         UUID downstream = insertService("svc-down-dup");
         jdbcTemplate.update(
                 "INSERT INTO service_dependencies " +
-                        "(upstream_service_id, downstream_service_id) VALUES (?, ?)",
-                upstream, downstream);
+                        "(id, upstream_service_id, downstream_service_id) VALUES (?, ?, ?)",
+                UUID.randomUUID(), upstream, downstream);
 
         assertThatThrownBy(() -> jdbcTemplate.update(
                 "INSERT INTO service_dependencies " +
-                        "(upstream_service_id, downstream_service_id) VALUES (?, ?)",
-                upstream, downstream))
+                        "(id, upstream_service_id, downstream_service_id) VALUES (?, ?, ?)",
+                UUID.randomUUID(), upstream, downstream))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -81,8 +81,8 @@ class RelationshipAndAuditSchemaTest {
         UUID downstream = insertService("svc-down-cascade");
         jdbcTemplate.update(
                 "INSERT INTO service_dependencies " +
-                        "(upstream_service_id, downstream_service_id) VALUES (?, ?)",
-                upstream, downstream);
+                        "(id, upstream_service_id, downstream_service_id) VALUES (?, ?, ?)",
+                UUID.randomUUID(), upstream, downstream);
 
         jdbcTemplate.update("DELETE FROM services WHERE id = ?", upstream);
 
@@ -101,9 +101,9 @@ class RelationshipAndAuditSchemaTest {
         UUID db = insertDatabase("db-shared");
 
         jdbcTemplate.update(
-                "INSERT INTO service_databases (service_id, database_id, is_owner, description) " +
-                        "VALUES (?, ?, ?, ?)",
-                svc, db, true, "primary read/write");
+                "INSERT INTO service_databases (id, service_id, database_id, is_owner, description) " +
+                        "VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), svc, db, true, "primary read/write");
 
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM service_databases " +
@@ -117,12 +117,12 @@ class RelationshipAndAuditSchemaTest {
         UUID svc = insertService("svc-db-dup");
         UUID db = insertDatabase("db-dup");
         jdbcTemplate.update(
-                "INSERT INTO service_databases (service_id, database_id) VALUES (?, ?)",
-                svc, db);
+                "INSERT INTO service_databases (id, service_id, database_id) VALUES (?, ?, ?)",
+                UUID.randomUUID(), svc, db);
 
         assertThatThrownBy(() -> jdbcTemplate.update(
-                "INSERT INTO service_databases (service_id, database_id) VALUES (?, ?)",
-                svc, db))
+                "INSERT INTO service_databases (id, service_id, database_id) VALUES (?, ?, ?)",
+                UUID.randomUUID(), svc, db))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -135,9 +135,9 @@ class RelationshipAndAuditSchemaTest {
         UUID api = insertApi(provider, "/v1/things", "GET");
 
         jdbcTemplate.update(
-                "INSERT INTO api_consumers (api_id, consumer_service_id, description) " +
-                        "VALUES (?, ?, ?)",
-                api, consumer, "fetches things on every page render");
+                "INSERT INTO api_consumers (id, api_id, consumer_service_id, description) " +
+                        "VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), api, consumer, "fetches things on every page render");
 
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM api_consumers " +
@@ -152,12 +152,12 @@ class RelationshipAndAuditSchemaTest {
         UUID consumer = insertService("svc-api-dup-consumer");
         UUID api = insertApi(provider, "/v1/dup", "GET");
         jdbcTemplate.update(
-                "INSERT INTO api_consumers (api_id, consumer_service_id) VALUES (?, ?)",
-                api, consumer);
+                "INSERT INTO api_consumers (id, api_id, consumer_service_id) VALUES (?, ?, ?)",
+                UUID.randomUUID(), api, consumer);
 
         assertThatThrownBy(() -> jdbcTemplate.update(
-                "INSERT INTO api_consumers (api_id, consumer_service_id) VALUES (?, ?)",
-                api, consumer))
+                "INSERT INTO api_consumers (id, api_id, consumer_service_id) VALUES (?, ?, ?)",
+                UUID.randomUUID(), api, consumer))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -170,8 +170,8 @@ class RelationshipAndAuditSchemaTest {
 
         jdbcTemplate.update(
                 "INSERT INTO service_external_deps " +
-                        "(service_id, external_dependency_id, description) VALUES (?, ?, ?)",
-                svc, dep, "process card payments");
+                        "(id, service_id, external_dependency_id, description) VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), svc, dep, "process card payments");
 
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM service_external_deps " +
@@ -186,13 +186,13 @@ class RelationshipAndAuditSchemaTest {
         UUID dep = insertExternalDep("SendGrid-link");
         jdbcTemplate.update(
                 "INSERT INTO service_external_deps " +
-                        "(service_id, external_dependency_id) VALUES (?, ?)",
-                svc, dep);
+                        "(id, service_id, external_dependency_id) VALUES (?, ?, ?)",
+                UUID.randomUUID(), svc, dep);
 
         assertThatThrownBy(() -> jdbcTemplate.update(
                 "INSERT INTO service_external_deps " +
-                        "(service_id, external_dependency_id) VALUES (?, ?)",
-                svc, dep))
+                        "(id, service_id, external_dependency_id) VALUES (?, ?, ?)",
+                UUID.randomUUID(), svc, dep))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -204,8 +204,8 @@ class RelationshipAndAuditSchemaTest {
 
         jdbcTemplate.update(
                 "INSERT INTO service_changes " +
-                        "(service_id, changed_by, change_type, summary) VALUES (?, ?, ?, ?)",
-                svc, "intake-agent", "created", "service registered via intake");
+                        "(id, service_id, changed_by, change_type, summary) VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), svc, "intake-agent", "created", "service registered via intake");
 
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM service_changes WHERE service_id = ?",
@@ -218,8 +218,8 @@ class RelationshipAndAuditSchemaTest {
         UUID svc = insertService("svc-audit-2");
         jdbcTemplate.update(
                 "INSERT INTO service_changes " +
-                        "(service_id, changed_by, change_type, summary) VALUES (?, ?, ?, ?)",
-                svc, "user@example.com", "updated", "owner_team changed");
+                        "(id, service_id, changed_by, change_type, summary) VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), svc, "user@example.com", "updated", "owner_team changed");
 
         jdbcTemplate.update("DELETE FROM services WHERE id = ?", svc);
 
@@ -239,7 +239,7 @@ class RelationshipAndAuditSchemaTest {
 
     private UUID insertDatabase(String name) {
         UUID id = UUID.randomUUID();
-        jdbcTemplate.update("INSERT INTO databases (id, name) VALUES (?, ?)", id, name);
+        jdbcTemplate.update("INSERT INTO data_stores (id, name) VALUES (?, ?)", id, name);
         return id;
     }
 

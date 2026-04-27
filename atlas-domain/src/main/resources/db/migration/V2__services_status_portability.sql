@@ -1,15 +1,7 @@
--- V2: Make services.status portable to MySQL/MariaDB.
--- Replaces the Postgres-only service_status ENUM with a TEXT column constrained
--- by a CHECK predicate. Same SQL behaviour on Postgres and MySQL/MariaDB.
--- See ADR-009 for rationale.
+-- V2: Superseded by the rewritten V1 (services.status is now TEXT + CHECK
+-- from the start). This migration originally converted the column from a
+-- Postgres ENUM to portable TEXT (ADR-009); the rewrite in Phase 5.5
+-- (DD-002) folded that change into V1 directly. Kept as a no-op so
+-- Flyway's version sequence stays continuous.
 
-ALTER TABLE services
-    ALTER COLUMN status DROP DEFAULT,
-    ALTER COLUMN status TYPE TEXT USING status::TEXT,
-    ALTER COLUMN status SET DEFAULT 'active';
-
-ALTER TABLE services
-    ADD CONSTRAINT services_status_check
-    CHECK (status IN ('active', 'deprecated', 'in_dev'));
-
-DROP TYPE service_status;
+SELECT 1;

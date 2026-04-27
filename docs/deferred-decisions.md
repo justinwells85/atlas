@@ -159,9 +159,23 @@ Atlas has no automated CI today. `mvn verify` runs locally. Branch protection, r
 
 ---
 
-## DD-002 — Schema is NOT portable to MariaDB (V1 is Postgres-specific)
+## DD-002 — Schema is NOT portable to MariaDB (V1 is Postgres-specific) — RESOLVED
 
-**Status**: Deferred. *Phase 4 M3, captured by failing test.*
+**Status**: Resolved in Phase 5.5 M1. *Originally Phase 4 M3.*
+
+**Resolution**: V1–V10 rewritten in portable SQL. `MariaDBPortabilitySmokeTest` is no longer `@Disabled` and passes; both Postgres and MariaDB Testcontainers run the migrations cleanly in `mvn verify`. Specific changes:
+
+- V1: dropped the `CREATE TYPE service_status AS ENUM` block and folded the V2 fix in directly (services.status is now TEXT + CHECK from the start). V2 is now a no-op kept for version-sequence continuity.
+- All tables: removed `gen_random_uuid()` defaults; UUIDs are generated app-side (Hibernate `@GeneratedValue` for entities; explicit `UUID.randomUUID()` in the `JdbcTemplate` writes — five repository methods updated, plus the schema/contract tests).
+- Type swaps: `JSONB` → `JSON`, `TIMESTAMPTZ` → `TIMESTAMP`, `now()` → `CURRENT_TIMESTAMP`. GIN index dropped (Postgres-only; unused per ADR-010 since JSON queries already happen in Java).
+- Reserved-word renames: table `databases` → `data_stores` (DATABASES is reserved in MariaDB); `service_changes.before` / `.after` → `before_snapshot` / `after_snapshot` (BEFORE is reserved in MariaDB).
+- Documented in `docs/schema.md` as a prototype-stage exception to the "never edit a committed migration" rule. The rule re-applies in full going forward.
+
+**Below preserved as the original deferred entry for historical context.**
+
+---
+
+The "portable to MariaDB" claim in `docs/architecture.md` and ADR-003 was originally false. `MariaDBPortabilitySmokeTest` (atlas-domain, `@Disabled`) ran the V1–V10 migrations against a MariaDB Testcontainer and failed at V1 line 7:
 
 The "portable to MariaDB" claim in `docs/architecture.md` and ADR-003 is currently false. `MariaDBPortabilitySmokeTest` (atlas-domain, `@Disabled`) runs the V1–V10 migrations against a MariaDB Testcontainer and fails at V1 line 7:
 

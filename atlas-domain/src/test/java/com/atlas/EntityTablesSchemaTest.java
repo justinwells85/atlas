@@ -35,8 +35,8 @@ class EntityTablesSchemaTest {
         UUID serviceId = insertService("svc-with-api");
 
         jdbcTemplate.update(
-                "INSERT INTO apis (service_id, path, method, auth_method) VALUES (?, ?, ?, ?)",
-                serviceId, "/v1/widgets", "GET", "api-key");
+                "INSERT INTO apis (id, service_id, path, method, auth_method) VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), serviceId, "/v1/widgets", "GET", "api-key");
 
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM apis WHERE service_id = ?",
@@ -49,8 +49,8 @@ class EntityTablesSchemaTest {
         UUID bogusServiceId = UUID.randomUUID();
 
         assertThatThrownBy(() -> jdbcTemplate.update(
-                "INSERT INTO apis (service_id, path, method) VALUES (?, ?, ?)",
-                bogusServiceId, "/v1/orphan", "GET"))
+                "INSERT INTO apis (id, service_id, path, method) VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), bogusServiceId, "/v1/orphan", "GET"))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -58,12 +58,12 @@ class EntityTablesSchemaTest {
     void whenApiDuplicatesServicePathMethod_thenUniqueViolationIsRaised() {
         UUID serviceId = insertService("svc-dup-api");
         jdbcTemplate.update(
-                "INSERT INTO apis (service_id, path, method) VALUES (?, ?, ?)",
-                serviceId, "/v1/dupes", "POST");
+                "INSERT INTO apis (id, service_id, path, method) VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), serviceId, "/v1/dupes", "POST");
 
         assertThatThrownBy(() -> jdbcTemplate.update(
-                "INSERT INTO apis (service_id, path, method) VALUES (?, ?, ?)",
-                serviceId, "/v1/dupes", "POST"))
+                "INSERT INTO apis (id, service_id, path, method) VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), serviceId, "/v1/dupes", "POST"))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -71,8 +71,8 @@ class EntityTablesSchemaTest {
     void whenServiceWithApisIsDeleted_thenApisAreDeleted() {
         UUID serviceId = insertService("svc-cascade");
         jdbcTemplate.update(
-                "INSERT INTO apis (service_id, path, method) VALUES (?, ?, ?)",
-                serviceId, "/v1/cascades", "GET");
+                "INSERT INTO apis (id, service_id, path, method) VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), serviceId, "/v1/cascades", "GET");
 
         jdbcTemplate.update("DELETE FROM services WHERE id = ?", serviceId);
 
@@ -87,21 +87,23 @@ class EntityTablesSchemaTest {
     @Test
     void whenDatabaseIsInserted_thenItPersists() {
         jdbcTemplate.update(
-                "INSERT INTO databases (name, engine, owner_team, data_classification) " +
-                        "VALUES (?, ?, ?, ?)",
-                "users-db", "postgres", "platform", "pii");
+                "INSERT INTO data_stores (id, name, engine, owner_team, data_classification) " +
+                        "VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), "users-db", "postgres", "platform", "pii");
 
         Long count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM databases WHERE name = 'users-db'", Long.class);
+                "SELECT COUNT(*) FROM data_stores WHERE name = 'users-db'", Long.class);
         assertThat(count).isEqualTo(1L);
     }
 
     @Test
     void whenDatabaseNameIsDuplicate_thenUniqueViolationIsRaised() {
-        jdbcTemplate.update("INSERT INTO databases (name) VALUES (?)", "shared-db");
+        jdbcTemplate.update("INSERT INTO data_stores (id, name) VALUES (?, ?)",
+                UUID.randomUUID(), "shared-db");
 
         assertThatThrownBy(() -> jdbcTemplate.update(
-                "INSERT INTO databases (name) VALUES (?)", "shared-db"))
+                "INSERT INTO data_stores (id, name) VALUES (?, ?)",
+                UUID.randomUUID(), "shared-db"))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -110,8 +112,8 @@ class EntityTablesSchemaTest {
     @Test
     void whenExternalDependencyIsInserted_thenItPersists() {
         jdbcTemplate.update(
-                "INSERT INTO external_dependencies (name, url, description) VALUES (?, ?, ?)",
-                "Stripe", "https://stripe.com", "Payments");
+                "INSERT INTO external_dependencies (id, name, url, description) VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), "Stripe", "https://stripe.com", "Payments");
 
         Long count = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM external_dependencies WHERE name = 'Stripe'",
@@ -122,10 +124,12 @@ class EntityTablesSchemaTest {
     @Test
     void whenExternalDependencyNameIsDuplicate_thenUniqueViolationIsRaised() {
         jdbcTemplate.update(
-                "INSERT INTO external_dependencies (name) VALUES (?)", "SendGrid");
+                "INSERT INTO external_dependencies (id, name) VALUES (?, ?)",
+                UUID.randomUUID(), "SendGrid");
 
         assertThatThrownBy(() -> jdbcTemplate.update(
-                "INSERT INTO external_dependencies (name) VALUES (?)", "SendGrid"))
+                "INSERT INTO external_dependencies (id, name) VALUES (?, ?)",
+                UUID.randomUUID(), "SendGrid"))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 

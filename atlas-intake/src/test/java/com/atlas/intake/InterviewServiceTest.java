@@ -58,7 +58,7 @@ class InterviewServiceTest {
         jdbc.update("DELETE FROM service_external_deps");
         jdbc.update("DELETE FROM service_databases");
         jdbc.update("DELETE FROM external_dependencies");
-        jdbc.update("DELETE FROM databases");
+        jdbc.update("DELETE FROM data_stores");
         jdbc.update("DELETE FROM service_changes");
         repository.deleteAll();
     }
@@ -529,7 +529,7 @@ class InterviewServiceTest {
         assertThat(dbs.get(0).engine()).isEqualTo("redis");          // unchanged from creation
         assertThat(dbs.get(0).isOwner()).isFalse();
         // No new database row created — count stays 1.
-        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM databases", Long.class);
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM data_stores", Long.class);
         assertThat(count).isEqualTo(1L);
     }
 

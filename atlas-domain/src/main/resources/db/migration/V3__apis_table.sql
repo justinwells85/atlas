@@ -3,15 +3,15 @@
 -- Cascade on service delete: orphan APIs are nonsense.
 
 CREATE TABLE apis (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID PRIMARY KEY,
     service_id      UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     path            TEXT NOT NULL,
     method          TEXT NOT NULL DEFAULT 'GET',
     description     TEXT,
     auth_method     TEXT,
-    metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    metadata        JSON NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT apis_service_path_method_unique UNIQUE (service_id, method, path)
 );
 

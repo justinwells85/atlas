@@ -1,6 +1,5 @@
 package com.atlas;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -14,15 +13,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Runs the V1–V10 Flyway migrations against MariaDB — the production target
- * per ADR-003. The local prototype runs Postgres; this test is the only thing
- * that exercises the schema's portability claim.
- *
- * Currently {@code @Disabled} because it fails on MariaDB at V1 line 7
- * ({@code CREATE TYPE service_status AS ENUM ...} is Postgres-only). See
- * {@code docs/deferred-decisions.md} DD-002 for the full failure list and the
- * remediation options. Re-enable once V1 is rewritten to portable SQL.
+ * per ADR-003. The local prototype runs Postgres; this test exercises the
+ * schema's portability claim, which became real in Phase 5.5 (DD-002) when
+ * V1–V10 were rewritten in portable SQL.
  */
-@Disabled("Schema portability gap — see docs/deferred-decisions.md DD-002")
 @SpringBootTest
 @Testcontainers
 class MariaDBPortabilitySmokeTest {
@@ -47,7 +41,7 @@ class MariaDBPortabilitySmokeTest {
         Long matched = jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM information_schema.tables " +
                         "WHERE table_schema = DATABASE() AND table_name IN " +
-                        "('services','apis','databases','external_dependencies'," +
+                        "('services','apis','data_stores','external_dependencies'," +
                         "'service_dependencies','service_databases','api_consumers'," +
                         "'service_external_deps','service_changes')",
                 Long.class);

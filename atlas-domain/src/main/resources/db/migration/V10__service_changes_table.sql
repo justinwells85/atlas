@@ -10,14 +10,14 @@
 -- down with revoked UPDATE/DELETE grants on the production role.
 
 CREATE TABLE service_changes (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              UUID PRIMARY KEY,
     service_id      UUID NOT NULL,
-    changed_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    changed_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     changed_by      TEXT,
     change_type     TEXT NOT NULL,
     summary         TEXT,
-    before          JSONB,
-    after           JSONB,
+    before_snapshot JSON,
+    after_snapshot  JSON,
     CONSTRAINT service_changes_change_type_check
         CHECK (change_type IN ('created', 'updated', 'deleted'))
 );

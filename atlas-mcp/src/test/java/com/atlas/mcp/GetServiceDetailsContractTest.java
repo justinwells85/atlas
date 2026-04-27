@@ -52,7 +52,7 @@ class GetServiceDetailsContractTest {
         jdbc.update("DELETE FROM api_consumers");
         jdbc.update("DELETE FROM apis");
         jdbc.update("DELETE FROM external_dependencies");
-        jdbc.update("DELETE FROM databases");
+        jdbc.update("DELETE FROM data_stores");
         services.deleteAll();
     }
 
@@ -81,33 +81,33 @@ class GetServiceDetailsContractTest {
         Service downstream = services.save(svc("checkout-ui", "checkout", ServiceStatus.ACTIVE));
 
         // APIs exposed by main
-        jdbc.update("INSERT INTO apis (service_id, path, method, auth_method, description) VALUES (?, ?, ?, ?, ?)",
-                main.getId(), "/v1/orders", "POST", "api-key", "Place an order");
-        jdbc.update("INSERT INTO apis (service_id, path, method, auth_method, description) VALUES (?, ?, ?, ?, ?)",
-                main.getId(), "/v1/orders/{id}", "GET", "api-key", "Read an order");
+        jdbc.update("INSERT INTO apis (id, service_id, path, method, auth_method, description) VALUES (?, ?, ?, ?, ?, ?)",
+                UUID.randomUUID(), main.getId(), "/v1/orders", "POST", "api-key", "Place an order");
+        jdbc.update("INSERT INTO apis (id, service_id, path, method, auth_method, description) VALUES (?, ?, ?, ?, ?, ?)",
+                UUID.randomUUID(), main.getId(), "/v1/orders/{id}", "GET", "api-key", "Read an order");
 
         // main depends on upstream; downstream depends on main
-        jdbc.update("INSERT INTO service_dependencies (upstream_service_id, downstream_service_id, description) VALUES (?, ?, ?)",
-                upstream.getId(), main.getId(), "checks stock");
-        jdbc.update("INSERT INTO service_dependencies (upstream_service_id, downstream_service_id, description) VALUES (?, ?, ?)",
-                main.getId(), downstream.getId(), "places orders");
+        jdbc.update("INSERT INTO service_dependencies (id, upstream_service_id, downstream_service_id, description) VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), upstream.getId(), main.getId(), "checks stock");
+        jdbc.update("INSERT INTO service_dependencies (id, upstream_service_id, downstream_service_id, description) VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), main.getId(), downstream.getId(), "places orders");
 
         // databases: main owns one, uses another
         UUID ownedDb = UUID.randomUUID();
         UUID sharedDb = UUID.randomUUID();
-        jdbc.update("INSERT INTO databases (id, name, engine) VALUES (?, ?, ?)", ownedDb, "orders-db", "postgres");
-        jdbc.update("INSERT INTO databases (id, name, engine) VALUES (?, ?, ?)", sharedDb, "shared-cache", "redis");
-        jdbc.update("INSERT INTO service_databases (service_id, database_id, is_owner, description) VALUES (?, ?, ?, ?)",
-                main.getId(), ownedDb, true, "primary store");
-        jdbc.update("INSERT INTO service_databases (service_id, database_id, is_owner, description) VALUES (?, ?, ?, ?)",
-                main.getId(), sharedDb, false, "session cache");
+        jdbc.update("INSERT INTO data_stores (id, name, engine) VALUES (?, ?, ?)", ownedDb, "orders-db", "postgres");
+        jdbc.update("INSERT INTO data_stores (id, name, engine) VALUES (?, ?, ?)", sharedDb, "shared-cache", "redis");
+        jdbc.update("INSERT INTO service_databases (id, service_id, database_id, is_owner, description) VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), main.getId(), ownedDb, true, "primary store");
+        jdbc.update("INSERT INTO service_databases (id, service_id, database_id, is_owner, description) VALUES (?, ?, ?, ?, ?)",
+                UUID.randomUUID(), main.getId(), sharedDb, false, "session cache");
 
         // external deps
         UUID stripeId = UUID.randomUUID();
         jdbc.update("INSERT INTO external_dependencies (id, name, url, description) VALUES (?, ?, ?, ?)",
                 stripeId, "Stripe", "https://stripe.com", "card payments");
-        jdbc.update("INSERT INTO service_external_deps (service_id, external_dependency_id, description) VALUES (?, ?, ?)",
-                main.getId(), stripeId, "card payment processing");
+        jdbc.update("INSERT INTO service_external_deps (id, service_id, external_dependency_id, description) VALUES (?, ?, ?, ?)",
+                UUID.randomUUID(), main.getId(), stripeId, "card payment processing");
 
         JsonNode body = callDetails(main.getId().toString());
 

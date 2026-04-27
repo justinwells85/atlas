@@ -96,15 +96,19 @@ The three decisions that previously lived here are now captured as ADRs in `deci
 
 Managed via Flyway. Files in `src/main/resources/db/migration/` (Flyway's classpath default):
 
-- `V1__initial_schema.sql` — services table
-- `V2__services_status_portability.sql` — services.status converted from ENUM to TEXT + CHECK (ADR-009)
+- `V1__initial_schema.sql` — services table (status TEXT + CHECK from the start; see Phase 5.5 portability note below)
+- `V2__services_status_portability.sql` — no-op since the Phase 5.5 rewrite folded its work into V1; kept for version-sequence continuity
 - `V3__apis_table.sql` — apis table
-- `V4__databases_table.sql` — databases table
+- `V4__databases_table.sql` — `data_stores` table (named `data_stores` not `databases` because DATABASES is reserved in MariaDB)
 - `V5__external_dependencies_table.sql` — external_dependencies table
 - `V6__service_dependencies_table.sql` — directed service-to-service edges (no self-edge, unique pair)
-- `V7__service_databases_table.sql` — service ↔ database join with `is_owner` flag
+- `V7__service_databases_table.sql` — service ↔ data_stores join with `is_owner` flag (relationship column kept as `database_id` for human readability)
 - `V8__api_consumers_table.sql` — api ↔ consumer-service join
 - `V9__service_external_deps_table.sql` — service ↔ external-dependency join
-- `V10__service_changes_table.sql` — append-only audit log; `service_id` is a soft FK so history outlives the service
+- `V10__service_changes_table.sql` — append-only audit log; `service_id` is a soft FK so history outlives the service. JSON snapshot columns are `before_snapshot` / `after_snapshot` because BEFORE is reserved in MariaDB.
 
-New migrations follow `V<N>__<description>.sql` naming. Never edit a committed migration; create a new one.
+New migrations follow `V<N>__<description>.sql` naming. **Never edit a committed migration; create a new one.**
+
+### Prototype-stage exception (Phase 5.5, DD-002)
+
+The "never edit a committed migration" rule was *deliberately* broken once during Phase 5.5 to close DD-002 (schema portability to MariaDB). The original V1–V10 used Postgres-specific constructs (`CREATE TYPE … AS ENUM`, `JSONB`, `TIMESTAMPTZ`, `gen_random_uuid()`, `GIN` index, the reserved word `databases`) that prevented the migrations from running on MariaDB. All ten files were rewritten in portable SQL, V2 became a no-op, and the table `databases` was renamed to `data_stores`. Local Postgres dev environments were re-initialised (drop + recreate); no production data was at risk because the prototype has none. The rule re-applies in full going forward — any future schema change is a new V<N>__<description>.sql.
