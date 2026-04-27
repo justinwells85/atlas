@@ -7,14 +7,11 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Read-only access to a service's relationship rows: APIs it exposes,
- * databases it uses, third-party dependencies, and upstream/downstream
- * service-to-service edges. JdbcTemplate (not JPA) so the joins stay
- * obvious and the read shape is independent of any future entity mappings.
- *
- * Writes to relationship tables are deferred to Phase 3.5; Phase 3 only
- * needs the read paths to be in place so Confluence pages can render
- * structured data once Phase 3.5 populates the rows.
+ * Access to a service's relationship rows: APIs it exposes, databases it uses,
+ * third-party dependencies, and upstream/downstream service-to-service edges.
+ * JdbcTemplate (not JPA) so the joins stay obvious and the read shape is
+ * independent of any future entity mappings. Phase 3.5 added the write methods
+ * that the intake interview calls when persisting captured relationship data.
  */
 @Repository
 public class ServiceRelationshipsRepository {
@@ -24,6 +21,31 @@ public class ServiceRelationshipsRepository {
     public ServiceRelationshipsRepository(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
     }
+
+    // --- Writes (Phase 3.5) -------------------------------------------------
+
+    /** Insert one row in {@code apis}. Returns the generated id. */
+    public UUID insertApi(UUID serviceId, String path, String method,
+                          String authMethod, String description) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO apis (id, service_id, path, method, auth_method, description) " +
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                id, serviceId, path, method, authMethod, description);
+        return id;
+    }
+
+    /** Insert one directed edge in {@code service_dependencies}. */
+    public void insertServiceDependency(UUID upstreamServiceId, UUID downstreamServiceId,
+                                        String description) {
+        jdbc.update(
+                "INSERT INTO service_dependencies " +
+                        "(upstream_service_id, downstream_service_id, description) " +
+                        "VALUES (?, ?, ?)",
+                upstreamServiceId, downstreamServiceId, description);
+    }
+
+    // --- Reads (Phase 3) ----------------------------------------------------
 
     public List<ApiSummary> findApisFor(UUID serviceId) {
         return jdbc.query(

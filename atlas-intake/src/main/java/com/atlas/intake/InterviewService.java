@@ -2,17 +2,33 @@ package com.atlas.intake;
 
 import com.atlas.anthropic.AnthropicGateway;
 import com.atlas.services.Service;
+import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
 import com.atlas.services.ServiceStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiFunction;
 
+import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_API;
+import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_DOWNSTREAM;
+import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_UPSTREAM;
+import static com.atlas.intake.InterviewStage.AWAITING_API_AUTH;
+import static com.atlas.intake.InterviewStage.AWAITING_API_DESCRIPTION;
+import static com.atlas.intake.InterviewStage.AWAITING_API_METHOD;
+import static com.atlas.intake.InterviewStage.AWAITING_API_PATH;
 import static com.atlas.intake.InterviewStage.AWAITING_DEPLOYMENT;
 import static com.atlas.intake.InterviewStage.AWAITING_DESCRIPTION;
 import static com.atlas.intake.InterviewStage.AWAITING_DESCRIPTION_CLARIFICATION;
+import static com.atlas.intake.InterviewStage.AWAITING_DOWNSTREAM_DESCRIPTION;
+import static com.atlas.intake.InterviewStage.AWAITING_DOWNSTREAM_NAME;
 import static com.atlas.intake.InterviewStage.AWAITING_FRAMEWORK;
+import static com.atlas.intake.InterviewStage.AWAITING_HAS_APIS;
+import static com.atlas.intake.InterviewStage.AWAITING_HAS_DOWNSTREAM_DEPS;
+import static com.atlas.intake.InterviewStage.AWAITING_HAS_UPSTREAM_DEPS;
 import static com.atlas.intake.InterviewStage.AWAITING_LANGUAGE;
 import static com.atlas.intake.InterviewStage.AWAITING_NAME;
 import static com.atlas.intake.InterviewStage.AWAITING_NOTES;
@@ -21,21 +37,37 @@ import static com.atlas.intake.InterviewStage.AWAITING_REPO_URL;
 import static com.atlas.intake.InterviewStage.AWAITING_SLA;
 import static com.atlas.intake.InterviewStage.AWAITING_STATUS;
 import static com.atlas.intake.InterviewStage.AWAITING_SUPPORT_CONTACT;
+import static com.atlas.intake.InterviewStage.AWAITING_UPSTREAM_DESCRIPTION;
+import static com.atlas.intake.InterviewStage.AWAITING_UPSTREAM_NAME;
 
 @Component
 public class InterviewService {
 
     private static final int BRIEF_DESCRIPTION_THRESHOLD = 20;
     private static final String SKIP_TOKEN = "skip";
+    private static final Set<String> VALID_HTTP_METHODS =
+            Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS");
+    private static final Set<String> YES_TOKENS = Set.of("y", "yes");
+    private static final Set<String> NO_TOKENS = Set.of("n", "no", "skip");
 
     private final ServiceRepository repository;
+    private final ServiceRelationshipsRepository relationships;
     private final AnthropicGateway anthropic;
 
-    public InterviewService(ServiceRepository repository, AnthropicGateway anthropic) {
+    public InterviewService(ServiceRepository repository,
+                            ServiceRelationshipsRepository relationships,
+                            AnthropicGateway anthropic) {
         this.repository = repository;
+        this.relationships = relationships;
         this.anthropic = anthropic;
     }
 
+    /**
+     * @Transactional so persistAndComplete's services-row + relationship-row
+     * inserts run in one transaction; non-completing turns get an empty tx,
+     * which is cheap.
+     */
+    @Transactional
     public TurnResult next(InterviewState state, String userInput) {
         InterviewState s = (state == null) ? InterviewState.empty() : state;
 
@@ -45,6 +77,7 @@ public class InterviewService {
 
         ServiceDraft d = s.draft();
 
+        // --- Required services-row fields ---------------------------------
         if (isBlank(d.name())) {
             return askWithError(s.atStage(AWAITING_NAME),
                     "What's the name of your service? (e.g., 'order-processor')");
@@ -70,8 +103,7 @@ public class InterviewService {
                     "What's the current status of " + d.name() + " — active, deprecated, or in_dev?");
         }
 
-        // Optional services-row fields. Each is asked once; user provides a value
-        // or types 'skip' (or just empty input) to advance and leave the field null.
+        // --- Optional services-row fields (M1) ----------------------------
         if (!s.hasVisitedOptional(AWAITING_LANGUAGE)) {
             return askWithError(s.atStage(AWAITING_LANGUAGE),
                     "What language is " + d.name() + " written in? (or 'skip')");
@@ -101,8 +133,82 @@ public class InterviewService {
                     "Any notes worth capturing? (or 'skip')");
         }
 
+        // --- APIs section (M2) --------------------------------------------
+        if (!s.hasVisitedOptional(AWAITING_HAS_APIS)) {
+            return askWithError(s.atStage(AWAITING_HAS_APIS),
+                    "Does " + d.name() + " expose any APIs? (yes/skip)");
+        }
+        if (!s.apisSectionClosed()) {
+            return askInsideApisSection(s);
+        }
+
+        // --- Upstream dependencies (M2) -----------------------------------
+        if (!s.hasVisitedOptional(AWAITING_HAS_UPSTREAM_DEPS)) {
+            return askWithError(s.atStage(AWAITING_HAS_UPSTREAM_DEPS),
+                    "Does " + d.name() + " depend on any other services? (yes/skip)");
+        }
+        if (!s.upstreamSectionClosed()) {
+            return askInsideUpstreamSection(s);
+        }
+
+        // --- Downstream dependencies (M2) ---------------------------------
+        if (!s.hasVisitedOptional(AWAITING_HAS_DOWNSTREAM_DEPS)) {
+            return askWithError(s.atStage(AWAITING_HAS_DOWNSTREAM_DEPS),
+                    "Do any other services depend on " + d.name() + "? (yes/skip)");
+        }
+        if (!s.downstreamSectionClosed()) {
+            return askInsideDownstreamSection(s);
+        }
+
         return persistAndComplete(s);
     }
+
+    // -----------------------------------------------------------------------
+    // Section question dispatchers
+    // -----------------------------------------------------------------------
+
+    private TurnResult askInsideApisSection(InterviewState s) {
+        return switch (s.stage()) {
+            case AWAITING_API_PATH -> askWithError(s, "Path of the API endpoint? (e.g., '/v1/orders')");
+            case AWAITING_API_METHOD -> askWithError(s,
+                    "HTTP method? (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)");
+            case AWAITING_API_AUTH -> askWithError(s,
+                    "Auth method? (e.g., 'api-key', 'oauth2', or 'skip')");
+            case AWAITING_API_DESCRIPTION -> askWithError(s,
+                    "Brief description of this endpoint? (or 'skip')");
+            case AWAITING_ANOTHER_API -> askWithError(s, "Add another API endpoint? (yes/no)");
+            default -> throw new IllegalStateException("Unexpected stage in APIs section: " + s.stage());
+        };
+    }
+
+    private TurnResult askInsideUpstreamSection(InterviewState s) {
+        return switch (s.stage()) {
+            case AWAITING_UPSTREAM_NAME -> askWithError(s,
+                    "Name of the service " + s.draft().name() + " depends on?");
+            case AWAITING_UPSTREAM_DESCRIPTION -> askWithError(s,
+                    "How does it depend on '" + s.currentUpstream().otherServiceName() + "'? (or 'skip')");
+            case AWAITING_ANOTHER_UPSTREAM -> askWithError(s,
+                    "Any other services " + s.draft().name() + " depends on? (yes/no)");
+            default -> throw new IllegalStateException("Unexpected stage in upstream section: " + s.stage());
+        };
+    }
+
+    private TurnResult askInsideDownstreamSection(InterviewState s) {
+        return switch (s.stage()) {
+            case AWAITING_DOWNSTREAM_NAME -> askWithError(s,
+                    "Name of a service that depends on " + s.draft().name() + "?");
+            case AWAITING_DOWNSTREAM_DESCRIPTION -> askWithError(s,
+                    "How does '" + s.currentDownstream().otherServiceName()
+                            + "' depend on " + s.draft().name() + "? (or 'skip')");
+            case AWAITING_ANOTHER_DOWNSTREAM -> askWithError(s,
+                    "Any other services that depend on " + s.draft().name() + "? (yes/no)");
+            default -> throw new IllegalStateException("Unexpected stage in downstream section: " + s.stage());
+        };
+    }
+
+    // -----------------------------------------------------------------------
+    // Input handlers
+    // -----------------------------------------------------------------------
 
     private InterviewState applyInput(InterviewState s, String userInput) {
         String trimmed = userInput == null ? "" : userInput.trim();
@@ -144,21 +250,152 @@ public class InterviewService {
             case AWAITING_SUPPORT_CONTACT -> applyOptional(s, trimmed, AWAITING_SUPPORT_CONTACT, ServiceDraft::withSupportContact);
             case AWAITING_SLA -> applyOptional(s, trimmed, AWAITING_SLA, ServiceDraft::withSla);
             case AWAITING_NOTES -> applyOptional(s, trimmed, AWAITING_NOTES, ServiceDraft::withNotes);
+
+            // APIs section
+            case AWAITING_HAS_APIS -> applySectionGate(s, trimmed, AWAITING_HAS_APIS,
+                    yes -> yes ? s.withCurrentApi(ApiDraft.empty()).atStage(AWAITING_API_PATH)
+                               : s.closeApisSection());
+            case AWAITING_API_PATH -> {
+                if (trimmed.isEmpty()) yield s.withError("Path cannot be blank.");
+                yield s.withCurrentApi(s.currentApi().withPath(trimmed))
+                        .atStage(AWAITING_API_METHOD).clearError();
+            }
+            case AWAITING_API_METHOD -> {
+                String method = trimmed.toUpperCase();
+                if (!VALID_HTTP_METHODS.contains(method)) {
+                    yield s.withError("Method must be one of: " + String.join(", ", VALID_HTTP_METHODS) + ".");
+                }
+                yield s.withCurrentApi(s.currentApi().withMethod(method))
+                        .atStage(AWAITING_API_AUTH).clearError();
+            }
+            case AWAITING_API_AUTH -> {
+                String value = isOptionalSkip(trimmed) ? null : trimmed;
+                yield s.withCurrentApi(s.currentApi().withAuthMethod(value))
+                        .atStage(AWAITING_API_DESCRIPTION).clearError();
+            }
+            case AWAITING_API_DESCRIPTION -> {
+                String value = isOptionalSkip(trimmed) ? null : trimmed;
+                yield s.withCurrentApi(s.currentApi().withDescription(value))
+                        .commitCurrentApi()
+                        .atStage(AWAITING_ANOTHER_API).clearError();
+            }
+            case AWAITING_ANOTHER_API -> applyAnother(s, trimmed,
+                    yes -> yes ? s.withCurrentApi(ApiDraft.empty()).atStage(AWAITING_API_PATH)
+                               : s.closeApisSection());
+
+            // Upstream deps section
+            case AWAITING_HAS_UPSTREAM_DEPS -> applySectionGate(s, trimmed, AWAITING_HAS_UPSTREAM_DEPS,
+                    yes -> yes ? s.withCurrentUpstream(DependencyEdgeDraft.empty()).atStage(AWAITING_UPSTREAM_NAME)
+                               : s.closeUpstreamSection());
+            case AWAITING_UPSTREAM_NAME -> applyDependencyName(s, trimmed,
+                    s.upstreamDependencies(), s::withCurrentUpstream, AWAITING_UPSTREAM_DESCRIPTION);
+            case AWAITING_UPSTREAM_DESCRIPTION -> {
+                String value = isOptionalSkip(trimmed) ? null : trimmed;
+                yield s.withCurrentUpstream(s.currentUpstream().withDescription(value))
+                        .commitCurrentUpstream()
+                        .atStage(AWAITING_ANOTHER_UPSTREAM).clearError();
+            }
+            case AWAITING_ANOTHER_UPSTREAM -> applyAnother(s, trimmed,
+                    yes -> yes ? s.withCurrentUpstream(DependencyEdgeDraft.empty()).atStage(AWAITING_UPSTREAM_NAME)
+                               : s.closeUpstreamSection());
+
+            // Downstream deps section
+            case AWAITING_HAS_DOWNSTREAM_DEPS -> applySectionGate(s, trimmed, AWAITING_HAS_DOWNSTREAM_DEPS,
+                    yes -> yes ? s.withCurrentDownstream(DependencyEdgeDraft.empty()).atStage(AWAITING_DOWNSTREAM_NAME)
+                               : s.closeDownstreamSection());
+            case AWAITING_DOWNSTREAM_NAME -> applyDependencyName(s, trimmed,
+                    s.downstreamDependencies(), s::withCurrentDownstream, AWAITING_DOWNSTREAM_DESCRIPTION);
+            case AWAITING_DOWNSTREAM_DESCRIPTION -> {
+                String value = isOptionalSkip(trimmed) ? null : trimmed;
+                yield s.withCurrentDownstream(s.currentDownstream().withDescription(value))
+                        .commitCurrentDownstream()
+                        .atStage(AWAITING_ANOTHER_DOWNSTREAM).clearError();
+            }
+            case AWAITING_ANOTHER_DOWNSTREAM -> applyAnother(s, trimmed,
+                    yes -> yes ? s.withCurrentDownstream(DependencyEdgeDraft.empty()).atStage(AWAITING_DOWNSTREAM_NAME)
+                               : s.closeDownstreamSection());
         };
     }
 
     /**
-     * Optional-field application: empty input or the literal "skip" leaves the
-     * draft field null; anything else sets it. Either way the stage is marked
-     * visited so the walk advances past it.
+     * Optional services-row field input. Empty input or literal "skip" leaves
+     * the field null and marks the stage visited; any other input sets it.
      */
     private InterviewState applyOptional(
             InterviewState s, String trimmed, InterviewStage stage,
             BiFunction<ServiceDraft, String, ServiceDraft> setter) {
-        boolean skipped = trimmed.isEmpty() || SKIP_TOKEN.equalsIgnoreCase(trimmed);
+        boolean skipped = isOptionalSkip(trimmed);
         ServiceDraft nextDraft = skipped ? s.draft() : setter.apply(s.draft(), trimmed);
         return s.withDraft(nextDraft).markOptionalVisited(stage).clearError();
     }
+
+    /**
+     * Section-gate input ("does this service have X?"). Yes enters the section,
+     * skip/no closes it. The gate stage is marked visited either way so the
+     * walk advances past it.
+     */
+    private InterviewState applySectionGate(
+            InterviewState s, String trimmed, InterviewStage gate,
+            java.util.function.Function<Boolean, InterviewState> branch) {
+        boolean yes = isYes(trimmed);
+        boolean no = isNo(trimmed) || trimmed.isEmpty();
+        if (!yes && !no) {
+            return s.withError("Please answer yes or skip.");
+        }
+        return branch.apply(yes).markOptionalVisited(gate).clearError();
+    }
+
+    /**
+     * "Add another?" loop input. Yes returns to the first sub-stage of the
+     * section; no closes the section. No state mutation if the input is
+     * unrecognised.
+     */
+    private InterviewState applyAnother(
+            InterviewState s, String trimmed,
+            java.util.function.Function<Boolean, InterviewState> branch) {
+        boolean yes = isYes(trimmed);
+        boolean no = isNo(trimmed);
+        if (!yes && !no) {
+            return s.withError("Please answer yes or no.");
+        }
+        return branch.apply(yes).clearError();
+    }
+
+    /**
+     * Dependency-name input: looks up the named service, rejects unknown
+     * names, self-references, and duplicates within the current section's list.
+     * On success, sets the current edge's other-service id+name and advances
+     * to the description sub-stage.
+     */
+    private InterviewState applyDependencyName(
+            InterviewState s, String name,
+            java.util.List<DependencyEdgeDraft> currentSectionList,
+            java.util.function.Function<DependencyEdgeDraft, InterviewState> setCurrent,
+            InterviewStage descriptionStage) {
+        if (name.isEmpty()) {
+            return s.withError("Service name cannot be blank.");
+        }
+        if (name.equals(s.draft().name())) {
+            return s.withError("A service can't depend on itself.");
+        }
+        if (currentSectionList.stream().anyMatch(d -> name.equals(d.otherServiceName()))) {
+            return s.withError("'" + name + "' is already in this list.");
+        }
+        Optional<Service> other = repository.findByName(name);
+        if (other.isEmpty()) {
+            return s.withError("No service named '" + name + "' exists.");
+        }
+        // currentEdge is the in-progress draft (set when section was entered or
+        // a previous "add another?" answered yes).
+        DependencyEdgeDraft current = (descriptionStage == AWAITING_UPSTREAM_DESCRIPTION)
+                ? s.currentUpstream() : s.currentDownstream();
+        return setCurrent.apply(current.withOther(other.get().getId(), name))
+                .atStage(descriptionStage).clearError();
+    }
+
+    // -----------------------------------------------------------------------
+    // Persistence
+    // -----------------------------------------------------------------------
 
     private TurnResult persistAndComplete(InterviewState s) {
         ServiceDraft d = s.draft();
@@ -174,9 +411,32 @@ public class InterviewService {
         entity.setSupportContact(d.supportContact());
         entity.setSla(d.sla());
         entity.setNotes(d.notes());
-        Service saved = repository.save(entity);
-        return new TurnResult(s.clearError(), null, true, saved.getId());
+        // saveAndFlush so the services row is visible to the JdbcTemplate
+        // inserts below — JPA's persistence context wouldn't otherwise flush
+        // until transaction commit, and the relationship inserts would hit
+        // a foreign-key violation.
+        Service saved = repository.saveAndFlush(entity);
+        UUID serviceId = saved.getId();
+
+        for (ApiDraft api : s.apis()) {
+            relationships.insertApi(serviceId, api.path(), api.method(),
+                    api.authMethod(), api.description());
+        }
+        for (DependencyEdgeDraft edge : s.upstreamDependencies()) {
+            // Captured as "this depends on other" — other is upstream, this is downstream.
+            relationships.insertServiceDependency(edge.otherServiceId(), serviceId, edge.description());
+        }
+        for (DependencyEdgeDraft edge : s.downstreamDependencies()) {
+            // Captured as "other depends on this" — this is upstream, other is downstream.
+            relationships.insertServiceDependency(serviceId, edge.otherServiceId(), edge.description());
+        }
+
+        return new TurnResult(s.clearError(), null, true, serviceId);
     }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
 
     private TurnResult askWithError(InterviewState s, String question) {
         String fullQuestion = (s.lastError() != null) ? s.lastError() + " " + question : question;
@@ -185,6 +445,18 @@ public class InterviewService {
 
     private static boolean isBlank(String s) {
         return s == null || s.isBlank();
+    }
+
+    private static boolean isOptionalSkip(String trimmed) {
+        return trimmed.isEmpty() || SKIP_TOKEN.equalsIgnoreCase(trimmed);
+    }
+
+    private static boolean isYes(String trimmed) {
+        return YES_TOKENS.contains(trimmed.toLowerCase());
+    }
+
+    private static boolean isNo(String trimmed) {
+        return NO_TOKENS.contains(trimmed.toLowerCase());
     }
 
     private static ServiceStatus parseStatus(String input) {
