@@ -10,6 +10,35 @@ Newest at top.
 
 ---
 
+## DD-011 — Confluence space layout: implementation lags the proposed structure
+
+**Status**: Deferred. *Pending stakeholder feedback on the proposal in `docs/confluence-layout.md`.*
+
+`docs/confluence-layout.md` (added separately for stakeholder socialisation) proposes a different Confluence space shape than what the M3–M5 sync agent currently produces. Current behaviour was settled in M1 as option (c) — the simplest fit for a dedicated `ATLAS` space — and works end-to-end today. The proposal asks for richer structure.
+
+**Gap**:
+
+| Aspect | Current (M1 option c) | Proposed (`confluence-layout.md`) |
+|---|---|---|
+| Page placement | Flat at space root | Children of a "Atlas — Service Inventory" landing page |
+| Service page title | `<service.name>` | `Service: <service.name>` |
+| Landing page | None | Required: about-this-space + auto-refreshed service index table |
+| Service deletion | Page is orphaned in Confluence; never removed by sync | Sub-page is deleted when the service is removed from Atlas |
+
+**Why deferred**: option (c) is sufficient for the Phase 5 dogfood demo and the prototype handoff path; the proposal adds real implementation work and is meant to be reviewed by stakeholders before we commit.
+
+**Trigger to revisit**: stakeholders sign off on the proposed layout (or revise it). Until then, current shape stands.
+
+**Remediation sketch (four steps to close the gap)**:
+1. **Title prefix** — change `SyncCoordinator` to use `"Service: " + service.name` as the page title. ~1 line + renderer test update.
+2. **Landing page generator** — new component that renders the "Atlas — Service Inventory" body (preamble + service-index table). Persistence: where does the landing page's Confluence ID live? Likely a single-row config table (e.g., `confluence_landing` with one row), or a fixed sentinel row in `services` (uglier).
+3. **Parent ID resolution** — each service-page create uses the landing page ID as `parentId`. `ConfluenceClient.createPage` already accepts a parent argument shape; coordinator wires it.
+4. **Delete-on-DB-delete** — a sync pass that finds Confluence pages whose `confluence_page_id` is set on no-longer-existing services (or a soft-delete flag if we add one) and DELETEs them via `DELETE /wiki/api/v2/pages/{id}`. New code path; no current orphan-cleanup exists.
+
+If the proposal is approved, items 1–3 are a clean follow-up phase (call it Phase 4.5 — Confluence Layout Alignment) that does not touch intake or MCP. Item 4 is the trickier one because today's data model has no "service deleted" signal — would need either a new `services.deleted_at` column or a separate `deleted_services` shadow table to drive the page-cleanup pass.
+
+---
+
 ## DD-010 — Intake's `method` validation rejects non-HTTP API surfaces (MCP, gRPC, AMQP, etc.)
 
 **Status**: Deferred. *Surfaced during the Phase 5 dogfood demo (Atlas registering Atlas).*
