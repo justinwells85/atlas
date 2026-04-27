@@ -14,20 +14,31 @@ import java.util.UUID;
 import java.util.function.BiFunction;
 
 import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_API;
+import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_DATABASE;
 import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_DOWNSTREAM;
+import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_EXTERNAL_DEP;
 import static com.atlas.intake.InterviewStage.AWAITING_ANOTHER_UPSTREAM;
 import static com.atlas.intake.InterviewStage.AWAITING_API_AUTH;
 import static com.atlas.intake.InterviewStage.AWAITING_API_DESCRIPTION;
 import static com.atlas.intake.InterviewStage.AWAITING_API_METHOD;
 import static com.atlas.intake.InterviewStage.AWAITING_API_PATH;
+import static com.atlas.intake.InterviewStage.AWAITING_DATABASE_ENGINE;
+import static com.atlas.intake.InterviewStage.AWAITING_DATABASE_IS_OWNER;
+import static com.atlas.intake.InterviewStage.AWAITING_DATABASE_LINK_DESCRIPTION;
+import static com.atlas.intake.InterviewStage.AWAITING_DATABASE_NAME;
 import static com.atlas.intake.InterviewStage.AWAITING_DEPLOYMENT;
 import static com.atlas.intake.InterviewStage.AWAITING_DESCRIPTION;
 import static com.atlas.intake.InterviewStage.AWAITING_DESCRIPTION_CLARIFICATION;
 import static com.atlas.intake.InterviewStage.AWAITING_DOWNSTREAM_DESCRIPTION;
 import static com.atlas.intake.InterviewStage.AWAITING_DOWNSTREAM_NAME;
+import static com.atlas.intake.InterviewStage.AWAITING_EXTERNAL_DEP_LINK_DESCRIPTION;
+import static com.atlas.intake.InterviewStage.AWAITING_EXTERNAL_DEP_NAME;
+import static com.atlas.intake.InterviewStage.AWAITING_EXTERNAL_DEP_URL;
 import static com.atlas.intake.InterviewStage.AWAITING_FRAMEWORK;
 import static com.atlas.intake.InterviewStage.AWAITING_HAS_APIS;
+import static com.atlas.intake.InterviewStage.AWAITING_HAS_DATABASES;
 import static com.atlas.intake.InterviewStage.AWAITING_HAS_DOWNSTREAM_DEPS;
+import static com.atlas.intake.InterviewStage.AWAITING_HAS_EXTERNAL_DEPS;
 import static com.atlas.intake.InterviewStage.AWAITING_HAS_UPSTREAM_DEPS;
 import static com.atlas.intake.InterviewStage.AWAITING_LANGUAGE;
 import static com.atlas.intake.InterviewStage.AWAITING_NAME;
@@ -160,6 +171,24 @@ public class InterviewService {
             return askInsideDownstreamSection(s);
         }
 
+        // --- Databases section (M3) ---------------------------------------
+        if (!s.hasVisitedOptional(AWAITING_HAS_DATABASES)) {
+            return askWithError(s.atStage(AWAITING_HAS_DATABASES),
+                    "Does " + d.name() + " use any databases? (yes/skip)");
+        }
+        if (!s.databasesSectionClosed()) {
+            return askInsideDatabasesSection(s);
+        }
+
+        // --- External dependencies section (M3) ---------------------------
+        if (!s.hasVisitedOptional(AWAITING_HAS_EXTERNAL_DEPS)) {
+            return askWithError(s.atStage(AWAITING_HAS_EXTERNAL_DEPS),
+                    "Does " + d.name() + " use any external/third-party services? (yes/skip)");
+        }
+        if (!s.externalDependenciesSectionClosed()) {
+            return askInsideExternalDependenciesSection(s);
+        }
+
         return persistAndComplete(s);
     }
 
@@ -203,6 +232,42 @@ public class InterviewService {
             case AWAITING_ANOTHER_DOWNSTREAM -> askWithError(s,
                     "Any other services that depend on " + s.draft().name() + "? (yes/no)");
             default -> throw new IllegalStateException("Unexpected stage in downstream section: " + s.stage());
+        };
+    }
+
+    private TurnResult askInsideDatabasesSection(InterviewState s) {
+        return switch (s.stage()) {
+            case AWAITING_DATABASE_NAME -> askWithError(s,
+                    "Name of the database? (e.g., 'orders-db')");
+            case AWAITING_DATABASE_ENGINE -> askWithError(s,
+                    "Engine for new database '" + s.currentDatabaseUsage().databaseName()
+                            + "'? (e.g., 'postgres', 'mysql', or 'skip')");
+            case AWAITING_DATABASE_IS_OWNER -> askWithError(s,
+                    "Does " + s.draft().name() + " own '"
+                            + s.currentDatabaseUsage().databaseName() + "'? (yes/no)");
+            case AWAITING_DATABASE_LINK_DESCRIPTION -> askWithError(s,
+                    "How does " + s.draft().name() + " use '"
+                            + s.currentDatabaseUsage().databaseName() + "'? (or 'skip')");
+            case AWAITING_ANOTHER_DATABASE -> askWithError(s,
+                    "Add another database? (yes/no)");
+            default -> throw new IllegalStateException("Unexpected stage in databases section: " + s.stage());
+        };
+    }
+
+    private TurnResult askInsideExternalDependenciesSection(InterviewState s) {
+        return switch (s.stage()) {
+            case AWAITING_EXTERNAL_DEP_NAME -> askWithError(s,
+                    "Name of the external service or tool? (e.g., 'Stripe', 'SendGrid')");
+            case AWAITING_EXTERNAL_DEP_URL -> askWithError(s,
+                    "URL for new dependency '" + s.currentExternalDependencyUsage().name()
+                            + "'? (or 'skip')");
+            case AWAITING_EXTERNAL_DEP_LINK_DESCRIPTION -> askWithError(s,
+                    "How does " + s.draft().name() + " use '"
+                            + s.currentExternalDependencyUsage().name() + "'? (or 'skip')");
+            case AWAITING_ANOTHER_EXTERNAL_DEP -> askWithError(s,
+                    "Add another external dependency? (yes/no)");
+            default -> throw new IllegalStateException(
+                    "Unexpected stage in external dependencies section: " + s.stage());
         };
     }
 
@@ -314,6 +379,55 @@ public class InterviewService {
             case AWAITING_ANOTHER_DOWNSTREAM -> applyAnother(s, trimmed,
                     yes -> yes ? s.withCurrentDownstream(DependencyEdgeDraft.empty()).atStage(AWAITING_DOWNSTREAM_NAME)
                                : s.closeDownstreamSection());
+
+            // Databases section (M3)
+            case AWAITING_HAS_DATABASES -> applySectionGate(s, trimmed, AWAITING_HAS_DATABASES,
+                    yes -> yes ? s.withCurrentDatabaseUsage(DatabaseUsageDraft.empty()).atStage(AWAITING_DATABASE_NAME)
+                               : s.closeDatabasesSection());
+            case AWAITING_DATABASE_NAME -> applyDatabaseName(s, trimmed);
+            case AWAITING_DATABASE_ENGINE -> {
+                String value = isOptionalSkip(trimmed) ? null : trimmed;
+                yield s.withCurrentDatabaseUsage(s.currentDatabaseUsage().withEngine(value))
+                        .atStage(AWAITING_DATABASE_IS_OWNER).clearError();
+            }
+            case AWAITING_DATABASE_IS_OWNER -> {
+                if (!isYes(trimmed) && !isNo(trimmed)) {
+                    yield s.withError("Please answer yes or no.");
+                }
+                yield s.withCurrentDatabaseUsage(s.currentDatabaseUsage().withIsOwner(isYes(trimmed)))
+                        .atStage(AWAITING_DATABASE_LINK_DESCRIPTION).clearError();
+            }
+            case AWAITING_DATABASE_LINK_DESCRIPTION -> {
+                String value = isOptionalSkip(trimmed) ? null : trimmed;
+                yield s.withCurrentDatabaseUsage(s.currentDatabaseUsage().withDescription(value))
+                        .commitCurrentDatabaseUsage()
+                        .atStage(AWAITING_ANOTHER_DATABASE).clearError();
+            }
+            case AWAITING_ANOTHER_DATABASE -> applyAnother(s, trimmed,
+                    yes -> yes ? s.withCurrentDatabaseUsage(DatabaseUsageDraft.empty()).atStage(AWAITING_DATABASE_NAME)
+                               : s.closeDatabasesSection());
+
+            // External dependencies section (M3)
+            case AWAITING_HAS_EXTERNAL_DEPS -> applySectionGate(s, trimmed, AWAITING_HAS_EXTERNAL_DEPS,
+                    yes -> yes ? s.withCurrentExternalDependencyUsage(ExternalDependencyUsageDraft.empty())
+                                    .atStage(AWAITING_EXTERNAL_DEP_NAME)
+                               : s.closeExternalDependenciesSection());
+            case AWAITING_EXTERNAL_DEP_NAME -> applyExternalDependencyName(s, trimmed);
+            case AWAITING_EXTERNAL_DEP_URL -> {
+                String value = isOptionalSkip(trimmed) ? null : trimmed;
+                yield s.withCurrentExternalDependencyUsage(s.currentExternalDependencyUsage().withUrl(value))
+                        .atStage(AWAITING_EXTERNAL_DEP_LINK_DESCRIPTION).clearError();
+            }
+            case AWAITING_EXTERNAL_DEP_LINK_DESCRIPTION -> {
+                String value = isOptionalSkip(trimmed) ? null : trimmed;
+                yield s.withCurrentExternalDependencyUsage(s.currentExternalDependencyUsage().withDescription(value))
+                        .commitCurrentExternalDependencyUsage()
+                        .atStage(AWAITING_ANOTHER_EXTERNAL_DEP).clearError();
+            }
+            case AWAITING_ANOTHER_EXTERNAL_DEP -> applyAnother(s, trimmed,
+                    yes -> yes ? s.withCurrentExternalDependencyUsage(ExternalDependencyUsageDraft.empty())
+                                    .atStage(AWAITING_EXTERNAL_DEP_NAME)
+                               : s.closeExternalDependenciesSection());
         };
     }
 
@@ -359,6 +473,50 @@ public class InterviewService {
             return s.withError("Please answer yes or no.");
         }
         return branch.apply(yes).clearError();
+    }
+
+    /**
+     * Database-name input (lookup-or-create). Rejects blank and duplicates;
+     * on lookup hit, jumps past the engine stage straight to is_owner; on
+     * miss, leaves databaseId null and advances to engine.
+     */
+    private InterviewState applyDatabaseName(InterviewState s, String name) {
+        if (name.isEmpty()) {
+            return s.withError("Database name cannot be blank.");
+        }
+        if (s.databaseUsages().stream().anyMatch(d -> name.equals(d.databaseName()))) {
+            return s.withError("'" + name + "' is already in this list.");
+        }
+        Optional<UUID> existing = relationships.findDatabaseIdByName(name);
+        DatabaseUsageDraft current = s.currentDatabaseUsage();
+        if (existing.isPresent()) {
+            return s.withCurrentDatabaseUsage(current.withExistingDatabase(existing.get(), name))
+                    .atStage(AWAITING_DATABASE_IS_OWNER).clearError();
+        }
+        return s.withCurrentDatabaseUsage(current.withNewDatabase(name))
+                .atStage(AWAITING_DATABASE_ENGINE).clearError();
+    }
+
+    /**
+     * External-dependency-name input (lookup-or-create). Same shape as
+     * {@link #applyDatabaseName}: hit jumps to link-description; miss goes
+     * through the URL stage.
+     */
+    private InterviewState applyExternalDependencyName(InterviewState s, String name) {
+        if (name.isEmpty()) {
+            return s.withError("Dependency name cannot be blank.");
+        }
+        if (s.externalDependencyUsages().stream().anyMatch(d -> name.equals(d.name()))) {
+            return s.withError("'" + name + "' is already in this list.");
+        }
+        Optional<UUID> existing = relationships.findExternalDependencyIdByName(name);
+        ExternalDependencyUsageDraft current = s.currentExternalDependencyUsage();
+        if (existing.isPresent()) {
+            return s.withCurrentExternalDependencyUsage(current.withExistingDependency(existing.get(), name))
+                    .atStage(AWAITING_EXTERNAL_DEP_LINK_DESCRIPTION).clearError();
+        }
+        return s.withCurrentExternalDependencyUsage(current.withNewDependency(name))
+                .atStage(AWAITING_EXTERNAL_DEP_URL).clearError();
     }
 
     /**
@@ -429,6 +587,19 @@ public class InterviewService {
         for (DependencyEdgeDraft edge : s.downstreamDependencies()) {
             // Captured as "other depends on this" — this is upstream, other is downstream.
             relationships.insertServiceDependency(serviceId, edge.otherServiceId(), edge.description());
+        }
+        for (DatabaseUsageDraft usage : s.databaseUsages()) {
+            UUID databaseId = usage.isNewDatabase()
+                    ? relationships.insertDatabase(usage.databaseName(), usage.engine())
+                    : usage.databaseId();
+            relationships.insertServiceDatabaseLink(serviceId, databaseId,
+                    Boolean.TRUE.equals(usage.isOwner()), usage.description());
+        }
+        for (ExternalDependencyUsageDraft usage : s.externalDependencyUsages()) {
+            UUID externalDepId = usage.isNewDependency()
+                    ? relationships.insertExternalDependency(usage.name(), usage.url())
+                    : usage.externalDependencyId();
+            relationships.insertServiceExternalDepLink(serviceId, externalDepId, usage.description());
         }
 
         return new TurnResult(s.clearError(), null, true, serviceId);

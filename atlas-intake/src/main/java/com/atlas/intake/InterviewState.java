@@ -33,6 +33,16 @@ public record InterviewState(
         DependencyEdgeDraft currentDownstream,
         boolean downstreamSectionClosed,
 
+        // Databases section (M3)
+        List<DatabaseUsageDraft> databaseUsages,
+        DatabaseUsageDraft currentDatabaseUsage,
+        boolean databasesSectionClosed,
+
+        // External dependencies section (M3)
+        List<ExternalDependencyUsageDraft> externalDependencyUsages,
+        ExternalDependencyUsageDraft currentExternalDependencyUsage,
+        boolean externalDependenciesSectionClosed,
+
         String lastError) {
 
     /** Defensive defaults so older client payloads don't NPE on collection access. */
@@ -41,11 +51,15 @@ public record InterviewState(
         if (apis == null) apis = List.of();
         if (upstreamDependencies == null) upstreamDependencies = List.of();
         if (downstreamDependencies == null) downstreamDependencies = List.of();
+        if (databaseUsages == null) databaseUsages = List.of();
+        if (externalDependencyUsages == null) externalDependencyUsages = List.of();
     }
 
     public static InterviewState empty() {
         return new InterviewState(
                 ServiceDraft.empty(), null, false, Set.of(),
+                List.of(), null, false,
+                List.of(), null, false,
                 List.of(), null, false,
                 List.of(), null, false,
                 List.of(), null, false,
@@ -59,6 +73,8 @@ public record InterviewState(
                 apis, currentApi, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -67,6 +83,8 @@ public record InterviewState(
                 apis, currentApi, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -75,6 +93,8 @@ public record InterviewState(
                 apis, currentApi, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -83,6 +103,8 @@ public record InterviewState(
                 apis, currentApi, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 e);
     }
 
@@ -97,6 +119,8 @@ public record InterviewState(
                 apis, currentApi, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -111,6 +135,8 @@ public record InterviewState(
                 apis, api, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -122,6 +148,8 @@ public record InterviewState(
                 List.copyOf(nextApis), null, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -130,6 +158,8 @@ public record InterviewState(
                 apis, null, true,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -140,6 +170,8 @@ public record InterviewState(
                 apis, currentApi, apisSectionClosed,
                 upstreamDependencies, d, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -151,6 +183,8 @@ public record InterviewState(
                 apis, currentApi, apisSectionClosed,
                 List.copyOf(next), null, upstreamSectionClosed,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -159,6 +193,8 @@ public record InterviewState(
                 apis, currentApi, apisSectionClosed,
                 upstreamDependencies, null, true,
                 downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -169,6 +205,8 @@ public record InterviewState(
                 apis, currentApi, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, d, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -180,6 +218,8 @@ public record InterviewState(
                 apis, currentApi, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 List.copyOf(next), null, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
                 lastError);
     }
 
@@ -188,6 +228,78 @@ public record InterviewState(
                 apis, currentApi, apisSectionClosed,
                 upstreamDependencies, currentUpstream, upstreamSectionClosed,
                 downstreamDependencies, null, true,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
+                lastError);
+    }
+
+    // --- Databases section helpers (M3) ------------------------------------
+
+    public InterviewState withCurrentDatabaseUsage(DatabaseUsageDraft d) {
+        return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
+                apis, currentApi, apisSectionClosed,
+                upstreamDependencies, currentUpstream, upstreamSectionClosed,
+                downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, d, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
+                lastError);
+    }
+
+    public InterviewState commitCurrentDatabaseUsage() {
+        if (currentDatabaseUsage == null) return this;
+        List<DatabaseUsageDraft> next = new ArrayList<>(databaseUsages);
+        next.add(currentDatabaseUsage);
+        return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
+                apis, currentApi, apisSectionClosed,
+                upstreamDependencies, currentUpstream, upstreamSectionClosed,
+                downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                List.copyOf(next), null, databasesSectionClosed,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
+                lastError);
+    }
+
+    public InterviewState closeDatabasesSection() {
+        return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
+                apis, currentApi, apisSectionClosed,
+                upstreamDependencies, currentUpstream, upstreamSectionClosed,
+                downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, null, true,
+                externalDependencyUsages, currentExternalDependencyUsage, externalDependenciesSectionClosed,
+                lastError);
+    }
+
+    // --- External-deps section helpers (M3) --------------------------------
+
+    public InterviewState withCurrentExternalDependencyUsage(ExternalDependencyUsageDraft d) {
+        return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
+                apis, currentApi, apisSectionClosed,
+                upstreamDependencies, currentUpstream, upstreamSectionClosed,
+                downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, d, externalDependenciesSectionClosed,
+                lastError);
+    }
+
+    public InterviewState commitCurrentExternalDependencyUsage() {
+        if (currentExternalDependencyUsage == null) return this;
+        List<ExternalDependencyUsageDraft> next = new ArrayList<>(externalDependencyUsages);
+        next.add(currentExternalDependencyUsage);
+        return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
+                apis, currentApi, apisSectionClosed,
+                upstreamDependencies, currentUpstream, upstreamSectionClosed,
+                downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                List.copyOf(next), null, externalDependenciesSectionClosed,
+                lastError);
+    }
+
+    public InterviewState closeExternalDependenciesSection() {
+        return new InterviewState(draft, stage, descriptionClarified, visitedOptionalStages,
+                apis, currentApi, apisSectionClosed,
+                upstreamDependencies, currentUpstream, upstreamSectionClosed,
+                downstreamDependencies, currentDownstream, downstreamSectionClosed,
+                databaseUsages, currentDatabaseUsage, databasesSectionClosed,
+                externalDependencyUsages, null, true,
                 lastError);
     }
 }

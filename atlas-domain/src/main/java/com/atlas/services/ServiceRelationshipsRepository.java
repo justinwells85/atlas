@@ -4,6 +4,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -43,6 +44,62 @@ public class ServiceRelationshipsRepository {
                         "(upstream_service_id, downstream_service_id, description) " +
                         "VALUES (?, ?, ?)",
                 upstreamServiceId, downstreamServiceId, description);
+    }
+
+    /** Lookup an existing database by name. */
+    public Optional<UUID> findDatabaseIdByName(String name) {
+        List<UUID> ids = jdbc.query(
+                "SELECT id FROM databases WHERE name = ?",
+                (rs, i) -> (UUID) rs.getObject("id"),
+                name);
+        return ids.isEmpty() ? Optional.empty() : Optional.of(ids.get(0));
+    }
+
+    /** Insert one row in {@code databases}. Returns the generated id. */
+    public UUID insertDatabase(String name, String engine) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO databases (id, name, engine) VALUES (?, ?, ?)",
+                id, name, engine);
+        return id;
+    }
+
+    /** Insert one row linking a service to a database (with ownership flag). */
+    public void insertServiceDatabaseLink(UUID serviceId, UUID databaseId,
+                                          boolean isOwner, String description) {
+        jdbc.update(
+                "INSERT INTO service_databases " +
+                        "(service_id, database_id, is_owner, description) " +
+                        "VALUES (?, ?, ?, ?)",
+                serviceId, databaseId, isOwner, description);
+    }
+
+    /** Lookup an existing external dependency by name. */
+    public Optional<UUID> findExternalDependencyIdByName(String name) {
+        List<UUID> ids = jdbc.query(
+                "SELECT id FROM external_dependencies WHERE name = ?",
+                (rs, i) -> (UUID) rs.getObject("id"),
+                name);
+        return ids.isEmpty() ? Optional.empty() : Optional.of(ids.get(0));
+    }
+
+    /** Insert one row in {@code external_dependencies}. Returns the generated id. */
+    public UUID insertExternalDependency(String name, String url) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO external_dependencies (id, name, url) VALUES (?, ?, ?)",
+                id, name, url);
+        return id;
+    }
+
+    /** Insert one row linking a service to an external dependency. */
+    public void insertServiceExternalDepLink(UUID serviceId, UUID externalDependencyId,
+                                             String description) {
+        jdbc.update(
+                "INSERT INTO service_external_deps " +
+                        "(service_id, external_dependency_id, description) " +
+                        "VALUES (?, ?, ?)",
+                serviceId, externalDependencyId, description);
     }
 
     // --- Reads (Phase 3) ----------------------------------------------------

@@ -44,11 +44,19 @@ class InterviewServiceTest {
     @MockitoBean
     AnthropicGateway anthropic;
 
+    @Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     @BeforeEach
     void wipe() {
         // Tests share a Testcontainers Postgres across the class; clean any
-        // services rows from previous methods so unique-name collisions and
-        // FK-cascade leftovers don't leak between tests.
+        // rows from previous methods so unique-name collisions and FK-cascade
+        // leftovers don't leak between tests. Order matters: link rows first,
+        // then leaf entities, then services (FK cascade catches the rest).
+        jdbc.update("DELETE FROM service_external_deps");
+        jdbc.update("DELETE FROM service_databases");
+        jdbc.update("DELETE FROM external_dependencies");
+        jdbc.update("DELETE FROM databases");
         repository.deleteAll();
     }
 
@@ -198,9 +206,7 @@ class InterviewServiceTest {
         r = interviewService.next(r.state(), "api-key");
         r = interviewService.next(r.state(), "Place an order");
         r = interviewService.next(r.state(), "no");                 // another?
-        // Skip the two dependency sections.
-        r = interviewService.next(r.state(), "skip");
-        r = interviewService.next(r.state(), "skip");
+        r = skipDependencyAndStorageSections(r);
 
         assertThat(r.complete()).isTrue();
         var apis = relationships.findApisFor(r.serviceId());
@@ -228,7 +234,7 @@ class InterviewServiceTest {
         r = interviewService.next(r.state(), "");                    // auth empty also skips
         r = interviewService.next(r.state(), "skip");                // description optional
         r = interviewService.next(r.state(), "no");                  // another?
-        r = skipAllDependencySections(r);
+        r = skipDependencyAndStorageSections(r);
 
         assertThat(r.complete()).isTrue();
         var apis = relationships.findApisFor(r.serviceId());
@@ -307,6 +313,7 @@ class InterviewServiceTest {
         r = interviewService.next(r.state(), "shipping-api");
         r = interviewService.next(r.state(), "consumes order events");
         r = interviewService.next(r.state(), "no");                  // another?
+        r = skipStorageSections(r);
 
         assertThat(r.complete()).isTrue();
         var upstream = relationships.findUpstreamDependenciesOf(r.serviceId());
@@ -341,6 +348,136 @@ class InterviewServiceTest {
     }
 
     // -----------------------------------------------------------------------
+    // Databases section (Phase 3.5 M3) — lookup-or-create
+    // -----------------------------------------------------------------------
+
+    @Test
+    void whenNewDatabaseIsCaptured_thenBothDatabaseAndLinkRowsAreCreated() {
+        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
+        r = skipAllOptionalServicesRowFields(r);
+        r = interviewService.next(r.state(), "skip");                // APIs
+        r = interviewService.next(r.state(), "skip");                // upstream
+        r = interviewService.next(r.state(), "skip");                // downstream
+        // Databases: new entity
+        r = interviewService.next(r.state(), "yes");
+        r = interviewService.next(r.state(), "orders-db");
+        r = interviewService.next(r.state(), "postgres");            // engine for new
+        r = interviewService.next(r.state(), "yes");                 // is_owner
+        r = interviewService.next(r.state(), "primary store for orders");
+        r = interviewService.next(r.state(), "no");                  // another?
+        r = interviewService.next(r.state(), "skip");                // external deps
+
+        assertThat(r.complete()).isTrue();
+        var dbs = relationships.findDatabasesFor(r.serviceId());
+        assertThat(dbs).hasSize(1);
+        assertThat(dbs.get(0).databaseName()).isEqualTo("orders-db");
+        assertThat(dbs.get(0).engine()).isEqualTo("postgres");
+        assertThat(dbs.get(0).isOwner()).isTrue();
+        assertThat(dbs.get(0).description()).isEqualTo("primary store for orders");
+    }
+
+    @Test
+    void whenExistingDatabaseIsReferenced_thenOnlyLinkRowIsCreated() {
+        // Pre-existing database row.
+        java.util.UUID existingDbId = relationships.insertDatabase("shared-cache", "redis");
+
+        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
+        r = skipAllOptionalServicesRowFields(r);
+        r = interviewService.next(r.state(), "skip");                // APIs
+        r = interviewService.next(r.state(), "skip");                // upstream
+        r = interviewService.next(r.state(), "skip");                // downstream
+        r = interviewService.next(r.state(), "yes");                 // databases gate
+        r = interviewService.next(r.state(), "shared-cache");        // existing → engine skipped
+        // Note: no engine prompt because the database already exists.
+        r = interviewService.next(r.state(), "no");                  // is_owner
+        r = interviewService.next(r.state(), "session cache");
+        r = interviewService.next(r.state(), "no");                  // another?
+        r = interviewService.next(r.state(), "skip");                // external deps
+
+        assertThat(r.complete()).isTrue();
+        var dbs = relationships.findDatabasesFor(r.serviceId());
+        assertThat(dbs).hasSize(1);
+        assertThat(dbs.get(0).databaseId()).isEqualTo(existingDbId);
+        assertThat(dbs.get(0).databaseName()).isEqualTo("shared-cache");
+        assertThat(dbs.get(0).engine()).isEqualTo("redis");          // unchanged from creation
+        assertThat(dbs.get(0).isOwner()).isFalse();
+        // No new database row created — count stays 1.
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM databases", Long.class);
+        assertThat(count).isEqualTo(1L);
+    }
+
+    @Test
+    void whenSameDatabaseIsAddedTwice_thenInterviewReprompts() {
+        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
+        r = skipAllOptionalServicesRowFields(r);
+        r = interviewService.next(r.state(), "skip");                // APIs
+        r = interviewService.next(r.state(), "skip");                // upstream
+        r = interviewService.next(r.state(), "skip");                // downstream
+        r = interviewService.next(r.state(), "yes");                 // databases gate
+        r = interviewService.next(r.state(), "orders-db");
+        r = interviewService.next(r.state(), "postgres");
+        r = interviewService.next(r.state(), "yes");
+        r = interviewService.next(r.state(), "primary");
+        r = interviewService.next(r.state(), "yes");                 // another db?
+        r = interviewService.next(r.state(), "orders-db");           // same again
+
+        assertThat(r.complete()).isFalse();
+        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_DATABASE_NAME);
+        assertThat(r.question()).contains("already in this list");
+    }
+
+    // -----------------------------------------------------------------------
+    // External dependencies section (Phase 3.5 M3) — lookup-or-create
+    // -----------------------------------------------------------------------
+
+    @Test
+    void whenNewExternalDependencyIsCaptured_thenBothEntityAndLinkRowsAreCreated() {
+        InterviewService.TurnResult r = startWithRequiredFields("payments-api", "payments");
+        r = skipAllOptionalServicesRowFields(r);
+        r = interviewService.next(r.state(), "skip");                // APIs
+        r = interviewService.next(r.state(), "skip");                // upstream
+        r = interviewService.next(r.state(), "skip");                // downstream
+        r = interviewService.next(r.state(), "skip");                // databases
+        // External deps: new entity
+        r = interviewService.next(r.state(), "yes");
+        r = interviewService.next(r.state(), "Stripe");
+        r = interviewService.next(r.state(), "https://stripe.com");  // url for new
+        r = interviewService.next(r.state(), "card payment processing");
+        r = interviewService.next(r.state(), "no");                  // another?
+
+        assertThat(r.complete()).isTrue();
+        var deps = relationships.findExternalDependenciesFor(r.serviceId());
+        assertThat(deps).hasSize(1);
+        assertThat(deps.get(0).name()).isEqualTo("Stripe");
+        assertThat(deps.get(0).url()).isEqualTo("https://stripe.com");
+        assertThat(deps.get(0).description()).isEqualTo("card payment processing");
+    }
+
+    @Test
+    void whenExistingExternalDependencyIsReferenced_thenOnlyLinkRowIsCreated() {
+        java.util.UUID existingId = relationships.insertExternalDependency("SendGrid", "https://sendgrid.com");
+
+        InterviewService.TurnResult r = startWithRequiredFields("notifications-svc", "platform");
+        r = skipAllOptionalServicesRowFields(r);
+        r = interviewService.next(r.state(), "skip");                // APIs
+        r = interviewService.next(r.state(), "skip");                // upstream
+        r = interviewService.next(r.state(), "skip");                // downstream
+        r = interviewService.next(r.state(), "skip");                // databases
+        r = interviewService.next(r.state(), "yes");                 // external deps gate
+        r = interviewService.next(r.state(), "SendGrid");            // existing → URL skipped
+        r = interviewService.next(r.state(), "transactional email");
+        r = interviewService.next(r.state(), "no");                  // another?
+
+        assertThat(r.complete()).isTrue();
+        var deps = relationships.findExternalDependenciesFor(r.serviceId());
+        assertThat(deps).hasSize(1);
+        assertThat(deps.get(0).externalDependencyId()).isEqualTo(existingId);
+        assertThat(deps.get(0).name()).isEqualTo("SendGrid");
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM external_dependencies", Long.class);
+        assertThat(count).isEqualTo(1L);
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
@@ -359,11 +496,19 @@ class InterviewServiceTest {
     }
 
     private InterviewService.TurnResult skipAllSectionGates(InterviewService.TurnResult r) {
-        for (int i = 0; i < 3; i++) r = interviewService.next(r.state(), "skip");
+        // 5 section gates: APIs, upstream deps, downstream deps, databases, external deps
+        for (int i = 0; i < 5; i++) r = interviewService.next(r.state(), "skip");
         return r;
     }
 
-    private InterviewService.TurnResult skipAllDependencySections(InterviewService.TurnResult r) {
+    private InterviewService.TurnResult skipDependencyAndStorageSections(InterviewService.TurnResult r) {
+        // 4 sections after APIs: upstream, downstream, databases, external deps
+        for (int i = 0; i < 4; i++) r = interviewService.next(r.state(), "skip");
+        return r;
+    }
+
+    private InterviewService.TurnResult skipStorageSections(InterviewService.TurnResult r) {
+        // 2 sections after dependencies: databases, external deps
         for (int i = 0; i < 2; i++) r = interviewService.next(r.state(), "skip");
         return r;
     }
