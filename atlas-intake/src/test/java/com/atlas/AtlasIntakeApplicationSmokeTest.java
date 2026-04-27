@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @Testcontainers
-class AtlasApplicationSmokeTest {
+class AtlasIntakeApplicationSmokeTest {
 
     @Container
     @ServiceConnection

@@ -4,6 +4,39 @@ Architectural decisions captured in lightweight ADR (Architecture Decision Recor
 
 ---
 
+## ADR-012: Multi-module Maven build; MCP server in its own Spring Boot app
+
+**Status**: Accepted
+
+**Context**: Phase 3 introduces an MCP server that exposes the Atlas data model to AI clients. Two structural questions had to be settled before the first line of MCP code was written:
+
+1. **Process shape.** Should the MCP server live inside the existing intake Spring Boot app (`com.atlas`, started by `AtlasApplication`), or as a separate Spring Boot application?
+2. **If separate, how do the apps share JPA entities and migrations?**
+
+Co-locating in one process is cheaper today: shared Spring context, one `mvn verify`, no module-boundary design. But the architecture diagram (`docs/architecture.md`) treats Intake, MCP, and the future Confluence Sync Agent as distinct components, and Phase 6's handoff to the enterprise team will need them deployable as independent services regardless. ADR-011's "asymmetric cost-of-being-wrong" reasoning cuts here too — except inverted: pulling apart a co-located app later means peeling JPA entities, repositories, configuration, and the Spring context boundary apart all at once, on a deadline. Splitting now, with one module and 38 tests on the line, is cheaper than splitting later with three modules of code on the line.
+
+For sharing JPA, three options were considered:
+- **Shared library module** — both apps depend on `atlas-domain` for entities, repositories, and migrations. One source of truth.
+- **Duplicate JPA entities** in each app. Guaranteed to drift; rejected.
+- **MCP reads via the intake REST API.** Adds an HTTP hop between two services that should both speak to the same DB; couples two prototype components in a way the architecture doesn't ask for. Rejected.
+
+**Decision**: Convert Atlas to a multi-module Maven project with three modules:
+
+- `atlas-domain` — library jar. Holds JPA entities (`Service`, `ServiceStatus`, `ServiceStatusConverter`), repositories (`ServiceRepository`), and Flyway migrations (`db/migration/V*.sql`). No `@SpringBootApplication` in `src/main`; a test-only `DomainTestApplication` in `src/test/java/com/atlas` lets schema and repository tests boot a Spring context.
+- `atlas-intake` — Spring Boot app on port `8080`, `127.0.0.1`-only. Houses the existing intake REST controller, interview state, and `AnthropicGateway`. Depends on `atlas-domain`.
+- `atlas-mcp` — Spring Boot app on port `8081`, `127.0.0.1`-only. Phase 3 MCP server scaffold; tools land in M1–M3. Depends on `atlas-domain`.
+
+Both Spring Boot apps load Flyway autoconfig; both run migrations on startup. Flyway's `flyway_schema_history` table-level lock serializes concurrent migration attempts, so whichever app starts first applies pending migrations and the other sees a clean schema. Standard Spring Boot multi-module Flyway pattern.
+
+**Consequences**:
+- Root `pom.xml` becomes a `<packaging>pom</packaging>` aggregator. Per-module `pom.xml` files declare actual dependencies. Versions live in root via the parent BOM and explicit `<dependencyManagement>` for `atlas-domain` and `anthropic-java`.
+- The Spring Boot 4 integration-module rule from ADR-007 still applies, now per module: `atlas-domain` declares `spring-boot-data-jpa`, `spring-boot-hibernate`, `spring-boot-flyway`; `atlas-intake` and `atlas-mcp` each declare `spring-boot-webmvc` and `spring-boot-tomcat` alongside `spring-boot-starter-web`.
+- `AtlasApplication` is renamed to `AtlasIntakeApplication`. `AtlasApplicationSmokeTest` becomes `AtlasIntakeApplicationSmokeTest`. Schema and repository tests move to `atlas-domain` and boot the test-only `DomainTestApplication`. All 38 Phase 2 tests pass in their new homes.
+- Two embedded Tomcats run side-by-side in local dev. Both bind to `127.0.0.1` per ADR-011, on distinct ports. Auth is still deferred until either app goes off `127.0.0.1` (per ADR-011's deferred-work register).
+- Future modules (e.g., `atlas-confluence-sync` in Phase 4) follow the same pattern: depend on `atlas-domain`, declare their own integration modules, run on their own port.
+
+---
+
 ## ADR-011: REST entry point for intake; conversation state deferred
 
 **Status**: Accepted
