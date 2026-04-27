@@ -55,20 +55,20 @@ Discovery during Phase 2: the intake interview captures 4 of 17 `services` colum
 
 ## Phase 4 — Confluence Sync
 
-- [ ] Credential discovery upfront: identify Confluence base URL, API token, target space, and page hierarchy *before* writing client code (avoid Phase 2's env-var-into-non-interactive-shell back-and-forth)
-- [ ] Atlassian Confluence API client
-- [ ] Page template renderer (DB record → Confluence storage format) — handles missing relationship data gracefully (thin sections, not errors)
-- [ ] Sync logic (create new page, update existing, track sync timestamp)
-- [ ] Scheduled job for periodic syncs
-- [ ] Tests: sync agent against a mocked Confluence API at the architectural seam
+- [x] Credential discovery upfront: identify Confluence base URL, API token, target space, and page hierarchy *before* writing client code (avoid Phase 2's env-var-into-non-interactive-shell back-and-forth)
+- [x] Atlassian Confluence API client
+- [x] Page template renderer (DB record → Confluence storage format) — handles missing relationship data gracefully (thin sections, not errors)
+- [x] Sync logic (create new page, update existing, track sync timestamp)
+- [x] Scheduled job for periodic syncs
+- [x] Tests: sync agent against a mocked Confluence API at the architectural seam
 
 ## Phase 5 — End-to-End Validation
 
-- [ ] Define "demo-ready service shape" as entry criterion (which fields and relationship rows must be populated for a representative demo) before kicking off this phase
-- [ ] Pick one real service, run intake → DB → MCP → Confluence end-to-end
-- [ ] Verify Confluence page renders correctly with all expected sections populated
-- [ ] Verify update path: change a field, re-sync, confirm Confluence reflects change
-- [ ] Document any rough edges discovered
+- [x] Define "demo-ready service shape" as entry criterion (which fields and relationship rows must be populated for a representative demo) before kicking off this phase — see `docs/phase-5-entry-criteria.md`
+- [x] Pick one real service, run intake → DB → MCP → Confluence end-to-end — Atlas itself dogfooded; `atlas-intake`, `atlas-mcp`, `atlas-confluence-sync` all registered and synced
+- [x] Verify Confluence page renders correctly with all expected sections populated
+- [ ] Verify update path: change a field, re-sync, confirm Confluence reflects change — covered in M4 smoke against `atlas-demo-m3`; not yet exercised on the Atlas-as-demo services
+- [x] Document any rough edges discovered — DD-005, DD-008, DD-010 captured in `docs/deferred-decisions.md`
 
 ## Phase 6 — Demo and Handoff
 

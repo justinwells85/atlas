@@ -10,6 +10,26 @@ Newest at top.
 
 ---
 
+## DD-010 — Intake's `method` validation rejects non-HTTP API surfaces (MCP, gRPC, AMQP, etc.)
+
+**Status**: Deferred. *Surfaced during the Phase 5 dogfood demo (Atlas registering Atlas).*
+
+`atlas-intake`'s `AWAITING_API_METHOD` stage validates user input against a fixed HTTP-verb whitelist (`GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS`). When registering `atlas-mcp` — which exposes 5 MCP tools (`search_services`, `list_services`, `get_service_details`, `update_service`, `ping`) — labeling the method as `MCP` was rejected; intake re-prompted in a loop until the driver hit its turn cap.
+
+**Workaround applied**: each MCP tool is registered with `method = POST` (the underlying HTTP/SSE transport when MCP runs over HTTP) and the tool's MCP-tool-ness is captured in the description (`"MCP tool. Find services by..."`). Functionally accurate, semantically lossy.
+
+**Why deferred**: workaround is a one-line description tweak per tool; broader fix needs schema-level thinking and we don't yet have other non-HTTP API surfaces in Atlas to validate the design against.
+
+**Trigger to revisit**: when registering a service whose APIs are gRPC, GraphQL, AMQP queues, Kafka topics, or anything else the HTTP-verb whitelist can't honestly describe. Even within Atlas this matters more once MCP becomes a documented integration story for partners.
+
+**Remediation sketch (two options)**:
+1. **Widen the validation** to accept a small set of named protocols (`MCP`, `gRPC`, `GraphQL`, `AMQP`, `Kafka`, plus the HTTP verbs). One-line code change, broader human input range, but `method` becomes a heterogeneous field that mixes verbs with protocol names.
+2. **Add a `protocol` column to `apis`** (HTTP / MCP / gRPC / Kafka / ...) and let `method` be context-dependent (HTTP verb when `protocol = HTTP`, tool name when `protocol = MCP`, topic when `protocol = Kafka`). Cleaner modeling but a schema migration plus renderer + intake updates.
+
+Option 2 is the proper fix; option 1 is the prototype-acceptable shortcut.
+
+---
+
 ## DD-009 — `409 Conflict` on Confluence PUT (concurrent edit race)
 
 **Status**: Deferred. *Phase 4 M3.*

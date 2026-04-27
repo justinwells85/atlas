@@ -4,6 +4,8 @@ Phase 5 (End-to-End Validation) picks one real service and runs it through the f
 
 This document defines the **minimum populated state** that makes a service worth using as the Phase 5 subject. If the chosen service does not meet these criteria, run the intake again with a more substantive participant or add the missing rows directly before kicking off the demo.
 
+> **Criteria are guidance, not hard gates.** Some real services genuinely lack one or two of the relationship classes — e.g., the *first* service registered has no upstream service deps because nothing structurally calls it; a service whose only consumers are humans (driving it via curl or a UI) has no API consumers in the inventory; an internal-only service has no external deps. These honest gaps render as thin notes in their respective sections and are perfectly acceptable for a demo subject — what matters is that the populated sections are substantive. The Phase 5 dogfood demo (`atlas-intake`) legitimately fails three of the eight criteria (no upstream service, no API consumers, no `metadata.data_classification`) and still tells a clean story. Use the verification query below to spot which criteria you're missing, then *decide* — fix or accept — rather than mechanically chasing all-`t`.
+
 ## Required services row
 
 All 11 columns in the `services` table (excluding the auto-managed ones — `id`, `created_at`, `updated_at`, `confluence_page_id`, `last_synced_to_confluence`, and `metadata` is optional) populated with non-empty values:
