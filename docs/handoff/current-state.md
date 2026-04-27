@@ -72,10 +72,10 @@ Not all gaps are deferred decisions; some are intentional non-goals at prototype
 - [x] Define entry criteria — `phase-5-entry-criteria.md`.
 - [x] Pick one real service, run the pipeline — Atlas itself, three modules. (Honest gaps in the criteria are documented as guidance.)
 - [x] Confluence page renders correctly with all expected sections — verified against the live ATLAS space.
-- [ ] Update path (DB change → re-sync → Confluence reflects) on the dogfood services — covered indirectly via M4 smoke against `atlas-demo-m3`; **not** explicitly re-run on the dogfood services. Cheap to do; left for the team taking it over.
+- [x] Update path (DB change → re-sync → Confluence reflects) — exercised on `atlas-intake` in Phase 5.5 M5: description changed to a verification marker (page v1 → v2 reflects the change), restored to the original (page v2 → v3 reflects the restore). Two-way update path proven.
 - [x] Document any rough edges discovered — captured as DD-005, DD-008, DD-010 (and DD-002 / DD-011 from earlier phases).
 
-Phase 5 is effectively complete; one open box left for completeness.
+**Phase 5 is closed.**
 
 ## Repository pointers
 

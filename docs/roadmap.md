@@ -67,7 +67,7 @@ Discovery during Phase 2: the intake interview captures 4 of 17 `services` colum
 - [x] Define "demo-ready service shape" as entry criterion (which fields and relationship rows must be populated for a representative demo) before kicking off this phase — see `docs/phase-5-entry-criteria.md`
 - [x] Pick one real service, run intake → DB → MCP → Confluence end-to-end — Atlas itself dogfooded; `atlas-intake`, `atlas-mcp`, `atlas-confluence-sync` all registered and synced
 - [x] Verify Confluence page renders correctly with all expected sections populated
-- [ ] Verify update path: change a field, re-sync, confirm Confluence reflects change — covered in M4 smoke against `atlas-demo-m3`; not yet exercised on the Atlas-as-demo services
+- [x] Verify update path: change a field, re-sync, confirm Confluence reflects change — exercised on `atlas-intake` in Phase 5.5 M5: description swapped to a verification marker (sync → page v2 reflects), restored to original (sync → page v3 reflects). Two-way update path proven.
 - [x] Document any rough edges discovered — DD-005, DD-008, DD-010 captured in `docs/deferred-decisions.md`
 
 ## Phase 6 — Demo and Handoff
