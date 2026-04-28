@@ -1,6 +1,6 @@
 package com.atlas.intake;
 
-import com.atlas.anthropic.AnthropicGateway;
+import com.atlas.llm.LlmGateway;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -10,15 +10,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/smoke")
 public class SmokeController {
 
-    private final AnthropicGateway anthropic;
+    private final LlmGateway llm;
 
-    public SmokeController(AnthropicGateway anthropic) {
-        this.anthropic = anthropic;
+    public SmokeController(LlmGateway llm) {
+        this.llm = llm;
     }
 
-    @PostMapping("/anthropic")
+    @PostMapping("/llm")
     public SmokeResponse smoke(@RequestBody SmokeRequest request) {
-        String text = anthropic.complete(request.prompt());
+        String text = llm.complete(request.prompt());
         return new SmokeResponse(text);
     }
 

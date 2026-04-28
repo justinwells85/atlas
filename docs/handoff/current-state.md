@@ -39,6 +39,7 @@ One-page summary of what is built, what is tested, what is not done, and what is
 | **409 Conflict on Confluence PUT** | Not handled; rare race in single-writer prototype. | DD-009 |
 | **Intake `method` validation rejects MCP / non-HTTP API surfaces** | Workaround in place (label as POST + describe in description). | DD-010 |
 | **Confluence layout proposal (landing page + parented sub-pages + delete-on-DB-delete)** | Awaiting stakeholder feedback on `confluence-layout.md`; current sync writes flat at space root. | DD-011 |
+| **Internal LLM gateway implementation** | Stub in place (`InternalLlmGateway` throws on call); abstraction `LlmGateway` ready for swap. | DD-012 + ADR-013 |
 
 The deferred-decisions list is the production-readiness checklist. Each entry has a *trigger to revisit* and a *remediation sketch*.
 

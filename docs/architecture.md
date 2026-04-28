@@ -29,12 +29,14 @@ Atlas is an AI-maintained service documentation system. It builds a living inven
 
 ### 1. Intake Agent
 
-A Spring Boot CLI/REST service that conducts AI-assisted interviews with service owners. Uses the `anthropic-java` SDK to call Claude. Captures structured data about a service and persists it to the database.
+A Spring Boot REST service that conducts AI-assisted interviews with service owners. Calls an LLM via a provider-neutral `LlmGateway` (ADR-013) for description-clarification turns; the rest of the interview is deterministic state-machine logic. Captures structured data about a service and persists it to the database.
 
 **Responsibilities:**
 - Run an interview flow (questions, follow-ups based on responses)
 - Validate inputs (required fields, formats, references to existing services)
 - Write to the `services` table and related tables
+
+The `LlmGateway` abstraction has two implementations: a direct-SDK `AnthropicLlmGateway` (default, used in the prototype) and an `InternalLlmGateway` stub for the org's internal LLM API gateway (DD-012, deferred). Selection is property-driven via `atlas.llm.provider`.
 
 ### 2. Database
 

@@ -91,6 +91,27 @@ Alternative: **Elastic Beanstalk** (simpler if your team already uses it) or **E
 
 The `127.0.0.1` binding from ADR-011 will need to change to `0.0.0.0` once the apps live in containers — bind-address is a Spring property override at deploy time, not a code change. **DD-001 captures the auth that should accompany this transition.**
 
+## LLM gateway provider
+
+Atlas calls an LLM during the intake interview's description-clarification turn. The call goes through the `LlmGateway` interface (ADR-013), which has two implementations selectable via the `atlas.llm.provider` property:
+
+| Provider value | Implementation | Status |
+|---|---|---|
+| `anthropic` (default) | `AnthropicLlmGateway` — direct call via the `anthropic-java` SDK | Used in the prototype |
+| `internal-gateway` | `InternalLlmGateway` — stub today, real impl deferred | DD-012 |
+
+For production deployment, the recommended path is **`atlas.llm.provider=internal-gateway`** so all LLM calls flow through the org-controlled gateway (centralised auth, observability, rate-limit enforcement, model-vendor abstraction). Until DD-012 is closed, the internal-gateway impl throws on call — toggling the provider in prod without first implementing DD-012 will fail every intake interview.
+
+`[org-decision]` items for the LLM gateway:
+
+1. **Endpoint URL** of the internal gateway — `[org-decision]`.
+2. **Auth model** — bearer token, mTLS, IAM, etc. — `[org-decision]`.
+3. **Secret wiring** — assuming a static API key, secret should live in Secrets Manager as `atlas/llm/internal-gateway/api-key` and inject as `ATLAS_LLM_INTERNAL_GATEWAY_API_KEY` (or equivalent) on the atlas-intake task definition. `[org-decision]` if a different auth model changes the wiring shape.
+4. **Network egress** — does the gateway live inside the VPC (no NAT egress needed) or on the public internet (NAT egress required, same as Anthropic API today)? `[org-decision]`.
+5. **Model selection** — pinned via header, body field, or per-environment default? `[org-decision]`.
+
+If the org chooses to keep `provider=anthropic` in production (e.g., as an interim posture), the existing secret `atlas/anthropic/api-key` covers it and no additional wiring is required. The recommendation is still to swap to the internal gateway as soon as DD-012 closes.
+
 ## Secrets management — AWS Secrets Manager
 
 Three secrets minimum:
@@ -98,7 +119,7 @@ Three secrets minimum:
 | Secret | Source | Consumer |
 |---|---|---|
 | `atlas/db/password` | Generated at RDS provisioning | All three task definitions inject as `SPRING_DATASOURCE_PASSWORD` |
-| `atlas/anthropic/api-key` | Org-issued Anthropic key | atlas-intake injects as `ANTHROPIC_API_KEY` |
+| `atlas/anthropic/api-key` | Org-issued Anthropic key (only needed if `atlas.llm.provider=anthropic`) | atlas-intake injects as `ANTHROPIC_API_KEY`. See "LLM gateway provider" section — production should switch to `internal-gateway` once DD-012 closes. |
 | `atlas/confluence/api-token` | Atlassian API token | atlas-confluence-sync injects as `ATLAS_CONFLUENCE_API_TOKEN` |
 | `atlas/confluence/email` | (optional secret; can also be plain config) | atlas-confluence-sync injects as `ATLAS_CONFLUENCE_EMAIL` |
 
@@ -167,6 +188,7 @@ These need org-specific answers before provisioning starts. Bring them to the en
 3. **Compute platform** — Fargate (recommended), Beanstalk, or EKS?
 4. **Domain & TLS** — does atlas-mcp need an external endpoint? If yes, what domain, and what cert source (ACM vs. uploaded)?
 5. **Auth model for the prototype-to-prod transition** — how does the org's SSO plug into Spring Security? (DD-001 — this is the biggest open architectural item.)
+5a. **Internal LLM gateway spec** — see the LLM gateway section above plus DD-012 for the seven sub-items the production team needs documented.
 6. **Backup retention beyond 7 days** — any compliance requirement?
 7. **Disaster recovery posture** — RPO/RTO targets? Multi-region?
 8. **Observability stack** — CloudWatch only, or route to Datadog/Splunk/your-tool?

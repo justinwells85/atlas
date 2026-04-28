@@ -1,6 +1,6 @@
 package com.atlas.intake;
 
-import com.atlas.anthropic.AnthropicGateway;
+import com.atlas.llm.LlmGateway;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -30,7 +30,7 @@ class IntakeControllerTest {
     MockMvc mockMvc;
 
     @MockitoBean
-    AnthropicGateway anthropic;
+    LlmGateway llm;
 
     @Test
     void whenIntakeTurnIsCalledWithEmptyBody_thenReturnsFirstQuestion() throws Exception {

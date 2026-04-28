@@ -1,6 +1,6 @@
 package com.atlas.intake;
 
-import com.atlas.anthropic.AnthropicGateway;
+import com.atlas.llm.LlmGateway;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
@@ -67,14 +67,14 @@ public class InterviewService {
 
     private final ServiceRepository repository;
     private final ServiceRelationshipsRepository relationships;
-    private final AnthropicGateway anthropic;
+    private final LlmGateway llm;
 
     public InterviewService(ServiceRepository repository,
                             ServiceRelationshipsRepository relationships,
-                            AnthropicGateway anthropic) {
+                            LlmGateway llm) {
         this.repository = repository;
         this.relationships = relationships;
-        this.anthropic = anthropic;
+        this.llm = llm;
     }
 
     /**
@@ -106,7 +106,7 @@ public class InterviewService {
                     + "'. They briefly described it as: '" + d.description() + "'. "
                     + "Ask one friendly follow-up question (15 words max) to help them describe what it does, "
                     + "who uses it, and how. Reply with only the question, no preamble.";
-            String followUp = anthropic.complete(prompt);
+            String followUp = llm.complete(prompt);
             return askWithError(s.atStage(AWAITING_DESCRIPTION_CLARIFICATION), followUp);
         }
         if (isBlank(d.ownerTeam())) {

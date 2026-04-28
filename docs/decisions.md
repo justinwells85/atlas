@@ -4,6 +4,36 @@ Architectural decisions captured in lightweight ADR (Architecture Decision Recor
 
 ---
 
+## ADR-013: LLM access via a provider-neutral gateway interface
+
+**Status**: Accepted (Phase 5.5 M6)
+
+**Context**: atlas-intake calls an LLM exactly once during the interview — the description-clarification turn. The original implementation (`AnthropicGateway`) wrapped the `anthropic-java` SDK directly; the dependency on a specific provider was visible in package names, class names, controller endpoints (`/api/smoke/anthropic`), property keys (`anthropic.api-key`, `anthropic.model`), and consumer code that autowired the concrete class.
+
+The production team taking Atlas to handoff has access to all foundation models through an *internal LLM API gateway* — a single org-controlled endpoint that abstracts over multiple model vendors. Atlas needs to be configurable to route LLM calls through that internal gateway in production rather than calling Anthropic directly.
+
+Three options were considered:
+
+1. **Defer the abstraction until the internal gateway is implemented**. Cheapest now; pushes the swap onto the production team to do alongside their integration work, when their attention is divided.
+2. **Build the abstraction now against one impl + a stub**. Locks in interface shape before the second implementation is real. Risk: the interface may not fit the internal gateway's actual API and require refactor.
+3. **Spec the internal gateway's API now and design the interface for both**. Best end state, but requires a spec that doesn't yet exist.
+
+**Decision**: Option 2 — build the abstraction now. Replace `AnthropicGateway` with a `com.atlas.llm.LlmGateway` interface and two implementations: `AnthropicLlmGateway` (current direct-SDK behavior) and `InternalLlmGateway` (stub that throws on call with a clear pointer to DD-012). Selection is property-driven via `atlas.llm.provider` (default `anthropic`), wired with Spring's `@ConditionalOnProperty`.
+
+The interface is intentionally **use-case-shaped, not message-shape**: a single `String complete(String prompt)` method, not a `Message[] send(Message[] messages)` mirror of Anthropic's SDK. Atlas's only LLM use case today is single-prompt-in / text-out clarification; richer features (system prompts, tool blocks, multi-turn) would leak Anthropic-specific concepts into the interface and likely not match the internal gateway's API anyway.
+
+**Convention** (the rule the abstraction enforces): the literal strings `anthropic` and `claude` may appear in code/config only inside (a) the `AnthropicLlmGateway` impl class, (b) `pom.xml` dependency declarations, (c) ADR / deferred-decisions prose, and (d) the `atlas.llm.anthropic.*` config namespace plus the `ANTHROPIC_API_KEY` env var name. Anywhere else is a leak; fix at code-review time.
+
+**Consequences**:
+
+- One commit's worth of mechanical churn: package rename (`com.atlas.anthropic` → `com.atlas.llm`), property rename (`anthropic.api-key` → `atlas.llm.anthropic.api-key`), endpoint rename (`/api/smoke/anthropic` → `/api/smoke/llm`), test-fixture renames. Local environments running off `application.properties` overrides may need to update property keys; the `ANTHROPIC_API_KEY` env-var name is preserved.
+- The `InternalLlmGateway` stub fails on call (not at boot) — preserves the ability to exercise toggle wiring in tests and lets the property be flipped without bricking local dev. Trade-off accepted: a misconfigured production looks healthy until the first intake request.
+- The interface is expected to evolve when the internal gateway lands. Single use case + small API surface keeps the eventual refactor bounded. Honest framing: this abstraction is *worth the effort even if the interface changes*, because the swap then becomes interface-fit work rather than codebase-wide find-and-replace.
+- Adding a new LLM use case (e.g., summarisation) requires a new method on `LlmGateway` and an implementation in both providers. That's the friction tax for keeping the abstraction unleaky.
+- See DD-012 for the deferred internal-gateway implementation, including its open spec items.
+
+---
+
 ## ADR-012: Multi-module Maven build; MCP server in its own Spring Boot app
 
 **Status**: Accepted

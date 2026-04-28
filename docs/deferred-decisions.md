@@ -10,6 +10,46 @@ Newest at top.
 
 ---
 
+## DD-012 — Internal LLM gateway implementation (`InternalLlmGateway`) is a stub
+
+**Status**: Deferred. *Phase 5.5 M6 introduced the abstraction; the second impl is pending the org-LLM-gateway spec.*
+
+ADR-013 added a `LlmGateway` interface and two implementations: `AnthropicLlmGateway` (current direct-SDK behavior, default) and `InternalLlmGateway`. The internal-gateway impl is a **stub** that throws `UnsupportedOperationException` on call:
+
+```
+atlas.llm.provider=internal-gateway is configured but not yet implemented.
+See docs/deferred-decisions.md DD-012 for status. Set
+atlas.llm.provider=anthropic to use the current Anthropic-direct
+implementation.
+```
+
+**Why deferred**: the org's internal LLM gateway has its own API shape (auth, request/response envelope, supported features, rate limits, model identifiers) that hasn't been specced into Atlas yet. Building a real implementation against a guessed shape produces churn when the actual spec arrives. The stub preserves the toggle wiring so the swap, when it happens, is bounded to one class.
+
+**Trigger to revisit**: the production team has the org-internal LLM gateway's API documented (or accessible enough to reverse-engineer). Likely during Phase 7 environment provisioning — the gateway's endpoint and auth are AWS-environment concerns.
+
+**Open spec items** (the production team must answer before implementation):
+
+1. **Endpoint URL** — fully-qualified base URL of the internal gateway.
+2. **Auth model** — Bearer token? mTLS? IAM-signed? Static API key per app?
+3. **Request envelope** — JSON shape for a "complete this prompt" call. Single-prompt vs. message-array? Required fields beyond prompt (model name, max tokens, temperature, system prompt)?
+4. **Response envelope** — text under what JSON path? Error shape? Streaming support?
+5. **Model selection** — does the gateway pick a model based on a header, a body field, or a per-app-config default?
+6. **Rate limits + retry posture** — does the gateway return 429s? Retry-After header semantics?
+7. **Observability** — are calls billed/tracked centrally? Does Atlas need to send a `X-Application-Id` or similar header?
+
+**Remediation sketch**:
+
+1. Capture the answers above (probably as a brief `docs/internal-llm-gateway-spec.md`).
+2. Replace `InternalLlmGateway`'s `complete(prompt)` body with a real HTTP call (likely `RestClient`, mirroring `ConfluenceClient`'s pattern). Same use-case-shaped interface; same property-driven toggle.
+3. Add provider-specific config keys under `atlas.llm.internal-gateway.*` (endpoint, secret name, model identifier).
+4. Add `WireMock` tests for the new impl, mirroring `ConfluenceClientTest`. The interface contract test stays unchanged.
+5. Update `aws-migration-plan.md`'s LLM section with the gateway endpoint, secret wiring, and any IAM/networking specifics (e.g., VPC endpoint vs. public URL).
+6. When confidence is high enough to flip production, change the property default in production environments (or override per-environment via `application-prod.properties` once profile-based config is added).
+
+The interface itself (`LlmGateway.complete(String) → String`) is expected to fit; if it doesn't (e.g., the internal gateway requires async streaming), revisit ADR-013 to widen the interface.
+
+---
+
 ## DD-011 — Confluence space layout: implementation lags the proposed structure
 
 **Status**: Deferred. *Pending stakeholder feedback on the proposal in `docs/confluence-layout.md`.*

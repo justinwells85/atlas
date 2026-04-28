@@ -1,6 +1,6 @@
 package com.atlas.intake;
 
-import com.atlas.anthropic.AnthropicGateway;
+import com.atlas.llm.LlmGateway;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
@@ -42,7 +42,7 @@ class InterviewServiceTest {
     ServiceRelationshipsRepository relationships;
 
     @MockitoBean
-    AnthropicGateway anthropic;
+    LlmGateway llm;
 
     @Autowired
     org.springframework.jdbc.core.JdbcTemplate jdbc;
@@ -79,7 +79,7 @@ class InterviewServiceTest {
 
     @Test
     void whenDescriptionIsBrief_thenFollowUpClarificationIsAsked() {
-        when(anthropic.complete(anyString())).thenReturn("What systems does it talk to?");
+        when(llm.complete(anyString())).thenReturn("What systems does it talk to?");
 
         InterviewService.TurnResult r = interviewService.next(null, null);
         r = interviewService.next(r.state(), "metrics-agg");
@@ -88,7 +88,7 @@ class InterviewServiceTest {
         assertThat(r.complete()).isFalse();
         assertThat(r.question()).isEqualTo("What systems does it talk to?");
         assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_DESCRIPTION_CLARIFICATION);
-        verify(anthropic).complete(contains("stats"));
+        verify(llm).complete(contains("stats"));
 
         r = interviewService.next(r.state(), "Reads from kafka topic 'orders' and pushes to grafana.");
         assertThat(r.state().descriptionClarified()).isTrue();
@@ -105,7 +105,7 @@ class InterviewServiceTest {
         assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_NAME);
         assertThat(r.question()).containsIgnoringCase("blank");
         assertThat(r.question()).containsIgnoringCase("name");
-        verify(anthropic, never()).complete(anyString());
+        verify(llm, never()).complete(anyString());
     }
 
     @Test

@@ -11,7 +11,7 @@ Get the prototype running end-to-end on a Mac, ~30 minutes from clone to first C
 | **PostgreSQL** | 14+ | Local DB. ADR-003. |
 | **Docker** | running | Testcontainers spins up Postgres + MariaDB instances during `mvn verify`. |
 | **Python** | 3.10+ | The intake-driver script that automates a service interview. |
-| **An Anthropic API key** | — | Set as `ANTHROPIC_API_KEY` env var. atlas-intake calls Claude during description-clarification turns. |
+| **An Anthropic API key** | — | Set as `ANTHROPIC_API_KEY` env var. atlas-intake calls an LLM through the `LlmGateway` abstraction (ADR-013); in the prototype the default provider is `anthropic` (direct SDK call). The production target is the org's internal LLM gateway via `atlas.llm.provider=internal-gateway`, currently a stub — see DD-012. |
 | **A Confluence Cloud space + API token** | — | Sync target. Set `ATLAS_CONFLUENCE_EMAIL` and `ATLAS_CONFLUENCE_API_TOKEN` env vars; configure the base URL and space key in `atlas-confluence-sync/src/main/resources/application.properties`. |
 
 On Mac:

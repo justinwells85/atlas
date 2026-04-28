@@ -1,31 +1,40 @@
-package com.atlas.anthropic;
+package com.atlas.llm;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+/**
+ * {@link LlmGateway} backed by the {@code anthropic-java} SDK. Active when
+ * {@code atlas.llm.provider=anthropic} (the default).
+ */
 @Component
-public class AnthropicGateway {
+@ConditionalOnProperty(prefix = "atlas.llm", name = "provider",
+        havingValue = "anthropic", matchIfMissing = true)
+public class AnthropicLlmGateway implements LlmGateway {
 
     private final AnthropicClient sdkClient;
     private final String model;
 
-    public AnthropicGateway(
-            @Value("${anthropic.api-key:}") String apiKey,
-            @Value("${anthropic.model:claude-sonnet-4-6}") String model) {
+    public AnthropicLlmGateway(
+            @Value("${atlas.llm.anthropic.api-key:}") String apiKey,
+            @Value("${atlas.llm.anthropic.model:claude-sonnet-4-6}") String model) {
         this.sdkClient = (apiKey == null || apiKey.isBlank())
                 ? null
                 : AnthropicOkHttpClient.builder().apiKey(apiKey).build();
         this.model = model;
     }
 
+    @Override
     public String complete(String prompt) {
         if (sdkClient == null) {
             throw new IllegalStateException(
-                    "ANTHROPIC_API_KEY is not configured; set the env var to enable Anthropic calls");
+                    "atlas.llm.anthropic.api-key is not configured (env var ANTHROPIC_API_KEY); " +
+                            "set it to enable LLM calls or switch atlas.llm.provider.");
         }
         MessageCreateParams params = MessageCreateParams.builder()
                 .model(model)
@@ -37,6 +46,6 @@ public class AnthropicGateway {
                 .filter(block -> block.text().isPresent())
                 .map(block -> block.text().get().text())
                 .findFirst()
-                .orElseThrow(() -> new IllegalStateException("No text content in Anthropic response"));
+                .orElseThrow(() -> new IllegalStateException("No text content in LLM response"));
     }
 }
