@@ -9,6 +9,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.delete;
+import static com.github.tomakehurst.wiremock.client.WireMock.deleteRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalToJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
@@ -143,5 +145,28 @@ class ConfluenceClientTest {
                 .withRequestBody(matchingJsonPath("$.body.representation", equalTo("storage")))
                 .withRequestBody(matchingJsonPath("$.body.value", equalTo("<h2>Overview</h2> updated")))
                 .withRequestBody(matchingJsonPath("$.version.number", equalTo("4"))));
+    }
+
+    @Test
+    void whenDeletingPage_thenSendsDeleteAndAcceptsSuccess() {
+        wireMock.stubFor(delete(urlPathEqualTo("/api/v2/pages/PAGE_ID"))
+                .willReturn(aResponse().withStatus(204)));
+
+        client.deletePage("PAGE_ID");
+
+        wireMock.verify(deleteRequestedFor(urlPathEqualTo("/api/v2/pages/PAGE_ID"))
+                .withHeader("Authorization", equalTo(EXPECTED_BASIC)));
+    }
+
+    @Test
+    void whenDeletingAlreadyMissingPage_thenTreats404AsSuccess() {
+        // Cleanup pass should not fail when someone has already deleted the
+        // page manually in Confluence. End state — page is gone — is what matters.
+        wireMock.stubFor(delete(urlPathEqualTo("/api/v2/pages/STALE"))
+                .willReturn(aResponse().withStatus(404).withBody("not found")));
+
+        client.deletePage("STALE"); // should not throw
+
+        wireMock.verify(deleteRequestedFor(urlPathEqualTo("/api/v2/pages/STALE")));
     }
 }

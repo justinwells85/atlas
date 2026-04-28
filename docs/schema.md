@@ -106,6 +106,7 @@ Managed via Flyway. Files in `src/main/resources/db/migration/` (Flyway's classp
 - `V8__api_consumers_table.sql` — api ↔ consumer-service join
 - `V9__service_external_deps_table.sql` — service ↔ external-dependency join
 - `V10__service_changes_table.sql` — append-only audit log; `service_id` is a soft FK so history outlives the service. JSON snapshot columns are `before_snapshot` / `after_snapshot` because BEFORE is reserved in MariaDB.
+- `V11__services_soft_delete.sql` — adds `services.deleted_at` for the soft-delete pattern (ADR-014, DD-013). Hibernate's `@SQLDelete` + `@SQLRestriction` make this transparent: `repository.delete()` flips `deleted_at`; queries auto-filter; the sync agent's cleanup pass uses native queries to find rows whose Confluence pages still need deleting.
 
 New migrations follow `V<N>__<description>.sql` naming. **Never edit a committed migration; create a new one.**
 

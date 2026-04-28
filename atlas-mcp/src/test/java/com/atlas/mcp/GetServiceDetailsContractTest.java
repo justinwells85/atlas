@@ -53,7 +53,8 @@ class GetServiceDetailsContractTest {
         jdbc.update("DELETE FROM apis");
         jdbc.update("DELETE FROM external_dependencies");
         jdbc.update("DELETE FROM data_stores");
-        services.deleteAll();
+        jdbc.update("DELETE FROM services");  // hard-DELETE (V11/ADR-014 soft-deletes by default)
+        jdbc.update("DELETE FROM service_changes");
     }
 
     @Test

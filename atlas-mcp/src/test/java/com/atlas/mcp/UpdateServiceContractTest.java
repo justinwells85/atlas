@@ -50,7 +50,7 @@ class UpdateServiceContractTest {
         // service_changes has a soft FK on service_id (no cascade); clean it
         // explicitly so audit-row tests see a fresh slate.
         jdbc.update("DELETE FROM service_changes");
-        services.deleteAll();
+        jdbc.update("DELETE FROM services");  // hard-DELETE (V11/ADR-014 soft-deletes by default)
     }
 
     @Test

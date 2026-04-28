@@ -10,9 +10,19 @@ Newest at top.
 
 ---
 
-## DD-013 — Confluence orphan-page cleanup when a service is deleted from the DB
+## DD-013 — Confluence orphan-page cleanup when a service is deleted from the DB — RESOLVED
 
-**Status**: Deferred. *Carved out of DD-011 during the Phase 4.5 layout work.*
+**Status**: Resolved (Phase 4.5 follow-up). *Carved out of DD-011 during the Phase 4.5 layout work; closed by ADR-014.*
+
+**Resolution**: implemented option 1 (soft-delete column on `services`). V11 adds `services.deleted_at TIMESTAMP NULL` + an index. Hibernate's `@SQLDelete` rewrites `repository.delete()` into an UPDATE that stamps `deleted_at`; `@SQLRestriction("deleted_at IS NULL")` filters every JPA query. The sync agent's `cleanupDeletedServices` pass loads soft-deleted rows with non-null `confluence_page_id` via a native query, calls `DELETE /wiki/api/v2/pages/{id}` (treating 404 as success — page already gone), and nulls the page ID. Cleanup runs on every `syncAll()`, is idempotent, and isolates per-row failures so one stuck page doesn't block others.
+
+Verified live: a soft-deleted service's Confluence page is removed on the next sync; the row stays with `deleted_at` set and `confluence_page_id` nulled; re-running sync is a no-op on cleaned rows. Re-activation (clearing `deleted_at`) creates a fresh page on the next sync.
+
+Caveat: the unique constraint on `services.name` is still in effect across soft-deleted rows — reusing a name in a fresh INSERT will fail until the soft-deleted row is hard-deleted. ADR-014 lists three remediation paths if this becomes a real workflow.
+
+**Below preserved as the original deferred entry for historical context.**
+
+---
 
 When a service is deleted from the Atlas database, its Confluence page becomes orphaned — the sync agent does not currently delete pages for services that no longer exist. The detection logic isn't trivial because the only handle to a service's page (`services.confluence_page_id`) disappears together with the row.
 

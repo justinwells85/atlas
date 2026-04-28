@@ -37,11 +37,15 @@ class ListServicesContractTest {
     @Autowired
     ServiceRepository services;
 
+    @Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     private final ObjectMapper json = new ObjectMapper();
 
     @BeforeEach
     void seed() {
-        services.deleteAll();
+        // Hard-DELETE — repository.deleteAll() now soft-deletes (V11/ADR-014).
+        jdbc.update("DELETE FROM services");
         for (int i = 1; i <= 5; i++) {
             Service s = new Service();
             s.setName(String.format("svc-%02d", i));

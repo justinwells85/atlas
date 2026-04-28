@@ -18,6 +18,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
+import static com.github.tomakehurst.wiremock.client.WireMock.delete;
+import static com.github.tomakehurst.wiremock.client.WireMock.deleteRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
@@ -64,10 +66,16 @@ class SyncCoordinatorIntegrationTest {
     @Autowired
     ServiceRepository serviceRepository;
 
+    @Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     @BeforeEach
     void resetState() {
         wireMock.resetAll();
-        serviceRepository.deleteAll();
+        // Native hard-DELETE — repository.deleteAll() now soft-deletes
+        // (V11 / ADR-014); we want a true clean slate between methods.
+        jdbc.update("DELETE FROM services");
+        jdbc.update("DELETE FROM service_changes");
     }
 
     /**
@@ -250,6 +258,78 @@ class SyncCoordinatorIntegrationTest {
                 .isEqualTo("PAGE_GOOD_2");
         assertThat(serviceRepository.findById(bad.getId()).orElseThrow().getConfluencePageId())
                 .isNull();
+    }
+
+    @Test
+    void whenServiceIsSoftDeleted_thenSyncCleansUpItsConfluencePage() {
+        // Create + sync a service so it has a confluence_page_id.
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: doomed-service")))
+                .willReturn(okJson("{\"id\":\"DOOMED_PAGE\"}")));
+
+        Service s = createService("doomed-service");
+        coordinator.syncOne(s.getId());
+        java.util.UUID svcId = s.getId();
+        assertThat(serviceRepository.findById(svcId).orElseThrow().getConfluencePageId())
+                .isEqualTo("DOOMED_PAGE");
+
+        // Soft-delete via repository.delete() — @SQLDelete rewrites to UPDATE.
+        serviceRepository.delete(serviceRepository.findById(svcId).orElseThrow());
+
+        // Stub the cleanup DELETE; reset old stubs on the page path so the
+        // cleanup pass cleanly hits the delete.
+        wireMock.stubFor(delete(urlPathEqualTo("/api/v2/pages/DOOMED_PAGE"))
+                .willReturn(aResponse().withStatus(204)));
+
+        SyncResult result = coordinator.syncAll();
+
+        // No live services left → success/failure counts both zero.
+        assertThat(result.successCount()).isZero();
+        assertThat(result.failureCount()).isZero();
+
+        // Cleanup happened.
+        wireMock.verify(deleteRequestedFor(urlPathEqualTo("/api/v2/pages/DOOMED_PAGE")));
+
+        // Row still exists (soft-deleted) with confluence_page_id nulled out.
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM services WHERE id = ? AND deleted_at IS NOT NULL " +
+                        "AND confluence_page_id IS NULL",
+                Long.class, svcId);
+        assertThat(count).isEqualTo(1L);
+
+        // Re-running sync is a no-op on this row (idempotent).
+        wireMock.resetRequests();
+        coordinator.syncAll();
+        wireMock.verify(0, deleteRequestedFor(urlPathEqualTo("/api/v2/pages/DOOMED_PAGE")));
+    }
+
+    @Test
+    void whenCleanupHits404OnAlreadyDeletedPage_thenStillNullsOutPageId() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: ghost-service")))
+                .willReturn(okJson("{\"id\":\"GHOST_PAGE\"}")));
+
+        Service s = createService("ghost-service");
+        coordinator.syncOne(s.getId());
+        java.util.UUID svcId = s.getId();
+
+        serviceRepository.delete(serviceRepository.findById(svcId).orElseThrow());
+
+        wireMock.stubFor(delete(urlPathEqualTo("/api/v2/pages/GHOST_PAGE"))
+                .willReturn(aResponse().withStatus(404)));
+
+        coordinator.syncAll();
+
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM services WHERE id = ? AND confluence_page_id IS NULL",
+                Long.class, svcId);
+        assertThat(count).isEqualTo(1L);
     }
 
     @Test

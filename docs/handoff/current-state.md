@@ -39,7 +39,7 @@ One-page summary of what is built, what is tested, what is not done, and what is
 | **409 Conflict on Confluence PUT** | Not handled; rare race in single-writer prototype. | DD-009 |
 | **Intake `method` validation rejects MCP / non-HTTP API surfaces** | Workaround in place (label as POST + describe in description). | DD-010 |
 | **Confluence layout: landing page + parented sub-pages + cross-links + inventory pages + About page** | **Resolved Phase 4.5 (M1–M3).** Service pages now parent under "Atlas — Service Inventory"; "Inventory: Data Stores", "Inventory: External Dependencies", and "About Atlas" pages added; service-to-service and resource references hyperlinked. | DD-011 |
-| **Orphan-page cleanup on service deletion** | Carved out from DD-011; data-model change (soft-delete column or shadow table) needed first. | DD-013 |
+| **Orphan-page cleanup on service deletion** | **Resolved** (ADR-014). V11 adds `services.deleted_at`; Hibernate `@SQLDelete` + `@SQLRestriction` make soft-delete transparent; the sync agent's cleanup pass deletes orphan Confluence pages on every `syncAll()`. | DD-013 |
 | **Internal LLM gateway implementation** | Stub in place (`InternalLlmGateway` throws on call); abstraction `LlmGateway` ready for swap. | DD-012 + ADR-013 |
 
 The deferred-decisions list is the production-readiness checklist. Each entry has a *trigger to revisit* and a *remediation sketch*.

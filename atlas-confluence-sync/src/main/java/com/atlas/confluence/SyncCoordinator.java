@@ -95,10 +95,14 @@ public class SyncCoordinator {
 
     /** Sync every service in the DB. Per-service errors are isolated. */
     public SyncResult syncAll() {
+        // Cleanup pass first: any service rows soft-deleted since last sync
+        // need their Confluence pages removed. Independent of the active
+        // service list — runs even when there are no live services.
+        cleanupDeletedServices();
+
         List<Service> services = serviceRepository.findAll();
         if (services.isEmpty()) {
-            // Nothing to do — skip Confluence calls entirely. Landing page
-            // maintenance only kicks in once the DB has at least one service.
+            // No live services — skip the rest of the Confluence calls.
             return new SyncResult(0, 0, List.of());
         }
 
@@ -122,6 +126,29 @@ public class SyncCoordinator {
 
         refreshWellKnownPages(pages, services, servicePageUrls);
         return new SyncResult(successes, failures.size(), failures);
+    }
+
+    /**
+     * Find every soft-deleted service that still has a Confluence page,
+     * delete the page, and null out the page ID. Per-service errors are
+     * logged and skipped — one stuck page does not block other cleanups.
+     * Idempotent: re-running on already-cleaned rows does nothing because
+     * they no longer match the {@code confluence_page_id IS NOT NULL} filter.
+     */
+    private void cleanupDeletedServices() {
+        List<Service> orphans = serviceRepository.findSoftDeletedWithConfluencePage();
+        for (Service s : orphans) {
+            String pageId = s.getConfluencePageId();
+            try {
+                confluenceClient.deletePage(pageId);
+                serviceRepository.clearConfluencePageId(s.getId());
+                log.info("Cleaned up Confluence page {} for soft-deleted service {} ({})",
+                        pageId, s.getName(), s.getId());
+            } catch (Exception e) {
+                log.warn("Cleanup of page {} for soft-deleted service {} ({}) failed: {}",
+                        pageId, s.getName(), s.getId(), e.getMessage());
+            }
+        }
     }
 
     /** Sync one service by ID. */

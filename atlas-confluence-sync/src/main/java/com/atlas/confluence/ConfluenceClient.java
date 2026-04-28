@@ -142,6 +142,22 @@ public class ConfluenceClient {
                 .toBodilessEntity();
     }
 
+    /**
+     * Delete a page. A 404 (page already gone) is treated as success — the
+     * end state is what matters, and that's the only sensible response when
+     * the cleanup pass runs against a page someone already deleted manually.
+     */
+    public void deletePage(String pageId) {
+        try {
+            http.delete()
+                    .uri("/api/v2/pages/{id}", pageId)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (HttpClientErrorException.NotFound e) {
+            // Already deleted in Confluence; treat as success.
+        }
+    }
+
     private String toJson(Object o) {
         try {
             return objectMapper.writeValueAsString(o);

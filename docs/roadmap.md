@@ -68,9 +68,9 @@ Discovery during Phase 2: the intake interview captures 4 of 17 `services` colum
 - [x] Service-to-service references rendered as hyperlinks to peer Confluence pages (M1)
 - [x] Inventory sub-pages: "Inventory: Data Stores", "Inventory: External Dependencies" (M2)
 - [x] About Atlas page; service-page back-references to inventory pages (M3)
-- [ ] Orphan-page cleanup on service deletion — carved out as DD-013 (data-model change required)
+- [x] Orphan-page cleanup on service deletion — soft-delete column + cleanup-sync pass (ADR-014, DD-013 resolved)
 
-Closes DD-011 except for the orphan-cleanup item, which moved to DD-013.
+Closes DD-011 entirely. ADR-014 documents the soft-delete pattern.
 
 ## Phase 5 — End-to-End Validation
 

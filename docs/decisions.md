@@ -4,6 +4,34 @@ Architectural decisions captured in lightweight ADR (Architecture Decision Recor
 
 ---
 
+## ADR-014: Soft-delete pattern for `services` to support Confluence orphan cleanup
+
+**Status**: Accepted (Phase 4.5 follow-up; closes DD-013)
+
+**Context**: When a service is removed from the Atlas inventory, its Confluence page becomes orphaned — the sync agent needs the page ID to delete the page in Confluence, but the page ID lives on the service row, which gets removed by a hard DELETE. Three options were considered (see DD-013 for the full comparison):
+
+1. Soft-delete column on `services` (`deleted_at TIMESTAMP NULL`); rewrite delete() into UPDATE; queries auto-filter the soft-deleted rows; cleanup-sync uses native query to bypass.
+2. Shadow table (`deleted_services_pages`) populated by a trigger or app-wrapper on hard delete.
+3. Confluence-side reconciliation — list all "Service: …" pages, delete those whose service no longer exists in the DB.
+
+**Decision**: Option 1 — `services.deleted_at` plus Hibernate `@SQLDelete` + `@SQLRestriction`. Cleanup-sync uses native queries to find soft-deleted rows with non-null `confluence_page_id`, calls `DELETE /wiki/api/v2/pages/{id}`, and nulls the page ID.
+
+Rationale:
+- Standard Spring/Hibernate pattern; well-understood; no new infrastructure.
+- One Flyway migration (`V11__services_soft_delete.sql`) adds an `ALTER TABLE` + index — portable across Postgres and MariaDB.
+- Active table stays simple; the implicit "WHERE deleted_at IS NULL" filter is what callers want 99% of the time.
+- Cleanup is idempotent (already-cleaned rows have null page ID and don't re-match the filter).
+- Works on top of the prototype's hard-DELETE-via-`repository.delete()` API surface — no caller code changes.
+
+**Consequences**:
+- Every JPA query on `Service` gains an implicit `WHERE deleted_at IS NULL`. A developer writing a new query gets soft-delete-aware behaviour for free, but has to remember the filter exists when designing flows that legitimately need to see soft-deleted rows. The cleanup-sync code is the one place that bypasses it (two repository methods marked native).
+- The `@SQLDelete` rewrite means `repository.delete(s)` and `deleteAll()` no longer remove rows. Tests that assert "row is gone after delete" need updating *if* they query through JPA — but the standard pattern (`existsById`, `findById` returning empty) is unchanged because of `@SQLRestriction`.
+- The unique constraint on `services.name` is still in effect across soft-deleted rows. Reusing a soft-deleted name in a fresh INSERT will fail. Acceptable at prototype scale; if name reuse becomes a real workflow, options are (a) tombstone the name on soft-delete (rewrite to `name__deleted_<id>`), (b) drop the constraint and enforce in app, or (c) make the constraint partial — only Postgres supports partial unique indexes natively, so portability would suffer.
+- Soft-deleted rows accumulate forever. No retention policy. Production may want one. Not a prototype concern.
+- Cleanup runs on every `syncAll()` (manual + scheduled). `syncOne()` does NOT run cleanup — it's targeted. The scheduled cron handles rolling cleanup at the configured cadence (default 15 minutes).
+
+---
+
 ## ADR-013: LLM access via a provider-neutral gateway interface
 
 **Status**: Accepted (Phase 5.5 M6)

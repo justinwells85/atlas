@@ -64,10 +64,15 @@ class SyncControllerTest {
     private static final String ED_INV_ID = "ED_INV";
     private static final String ABOUT_ID = "ABOUT";
 
+    @Autowired
+    org.springframework.jdbc.core.JdbcTemplate jdbc;
+
     @BeforeEach
     void resetState() {
         wireMock.resetAll();
-        serviceRepository.deleteAll();
+        // Hard-delete (not repository.deleteAll(), which now soft-deletes).
+        jdbc.update("DELETE FROM services");
+        jdbc.update("DELETE FROM service_changes");
     }
 
     private void stubLandingPageExists() {

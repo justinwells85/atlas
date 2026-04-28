@@ -8,6 +8,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.SQLDelete;
+import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
@@ -15,8 +17,18 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Soft-delete pattern (V11 / DD-013): {@code @SQLDelete} rewrites delete()
+ * calls into an UPDATE that stamps {@code deleted_at}; {@code @SQLRestriction}
+ * filters every JPA query so soft-deleted rows are invisible to normal
+ * findAll/findById/findByName paths. The sync coordinator's cleanup pass
+ * uses a native query to bypass the filter and find pages still needing
+ * deletion in Confluence.
+ */
 @Entity
 @Table(name = "services")
+@SQLDelete(sql = "UPDATE services SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?")
+@SQLRestriction("deleted_at IS NULL")
 public class Service {
 
     @Id
@@ -65,6 +77,9 @@ public class Service {
 
     @Column(name = "updated_at", insertable = false)
     private OffsetDateTime updatedAt;
+
+    @Column(name = "deleted_at", insertable = false, updatable = false)
+    private OffsetDateTime deletedAt;
 
     /**
      * ADR-008: bump updated_at on every JPA-managed update. Raw SQL writes
@@ -121,4 +136,5 @@ public class Service {
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public OffsetDateTime getDeletedAt() { return deletedAt; }
 }

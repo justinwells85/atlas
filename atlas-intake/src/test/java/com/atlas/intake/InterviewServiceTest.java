@@ -60,7 +60,10 @@ class InterviewServiceTest {
         jdbc.update("DELETE FROM external_dependencies");
         jdbc.update("DELETE FROM data_stores");
         jdbc.update("DELETE FROM service_changes");
-        repository.deleteAll();
+        // Native hard-DELETE — repository.deleteAll() would now soft-delete
+        // (V11 / ADR-014), leaving rows that violate name UNIQUE on the next
+        // INSERT. Tests need a true clean slate between methods.
+        jdbc.update("DELETE FROM services");
     }
 
     // -----------------------------------------------------------------------
