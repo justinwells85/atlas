@@ -158,13 +158,57 @@ class ServicePageRendererTest {
     }
 
     @Test
+    void whenServicePageUrlsMapHasUpstreamPeer_thenUpstreamRendersAsHyperlink() {
+        Service s = baseService();
+        UUID upstreamId = UUID.randomUUID();
+        ServiceDependencyEdge edge = new ServiceDependencyEdge(
+                upstreamId, "auth-service",
+                UUID.randomUUID(), "base",
+                "JWT validation");
+
+        ServicePageContext ctx = new ServicePageContext(
+                s, List.of(),
+                List.of(edge),
+                List.of(), List.of(), List.of(), List.of(),
+                Map.of(upstreamId, "https://example.atlassian.net/wiki/spaces/ATLAS/pages/4242"));
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("<a href=\"https://example.atlassian.net/wiki/spaces/ATLAS/pages/4242\">auth-service</a>")
+                .contains("JWT validation");
+    }
+
+    @Test
+    void whenServicePageUrlsMapMissingPeer_thenUpstreamRendersAsPlainText() {
+        Service s = baseService();
+        UUID upstreamId = UUID.randomUUID();
+        ServiceDependencyEdge edge = new ServiceDependencyEdge(
+                upstreamId, "auth-service",
+                UUID.randomUUID(), "base",
+                "JWT validation");
+
+        ServicePageContext ctx = new ServicePageContext(
+                s, List.of(),
+                List.of(edge),
+                List.of(), List.of(), List.of(), List.of(),
+                Map.of()); // empty — peer page not yet synced
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("auth-service")
+                .doesNotContain("<a href=");
+    }
+
+    @Test
     void whenServiceHasNoApiConsumers_thenApiRendersWithoutConsumerLine() {
         Service s = baseService();
         ApiSummary api = new ApiSummary(UUID.randomUUID(), "/v1/health", "GET", "none", "Health check");
         ServicePageContext ctx = new ServicePageContext(
                 s,
                 List.of(new ApiPresentation(api, List.of())),
-                List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), Map.of());
 
         String rendered = renderer.render(ctx);
 
@@ -224,7 +268,8 @@ class ServicePageRendererTest {
                 List.of(downstream),
                 List.of(db),
                 List.of(ext),
-                List.of(change));
+                List.of(change),
+                Map.of());
     }
 
     private ServicePageContext minimalContext() {
@@ -236,7 +281,7 @@ class ServicePageRendererTest {
 
     private ServicePageContext emptyContextFor(Service s) {
         return new ServicePageContext(
-                s, List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                s, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of());
     }
 
     private Service baseService() {

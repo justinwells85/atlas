@@ -35,6 +35,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers
 class SyncCoordinatorIntegrationTest {
 
+    private static final String LANDING_ID = "LANDING";
+
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:14");
@@ -65,15 +67,33 @@ class SyncCoordinatorIntegrationTest {
         serviceRepository.deleteAll();
     }
 
+    /**
+     * Stub the landing-page interactions so each test can focus on the
+     * service-page assertions. Pretends the landing page already exists at
+     * {@link #LANDING_ID}; coordinator finds it on lookup, then GETs version
+     * + PUTs the refreshed body after services are synced.
+     */
+    private void stubLandingPageExists() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages"))
+                .withQueryParam("title", containing("Atlas"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"" + LANDING_ID + "\"}]}")));
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/" + LANDING_ID))
+                .willReturn(okJson("{\"id\":\"" + LANDING_ID + "\",\"version\":{\"number\":1}}")));
+        wireMock.stubFor(put(urlPathEqualTo("/api/v2/pages/" + LANDING_ID))
+                .willReturn(okJson("{\"id\":\"" + LANDING_ID + "\",\"version\":{\"number\":2}}")));
+    }
+
     @Test
     void whenServiceHasNoPageId_thenCreatesPageAndPersistsId() {
         wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
                 .willReturn(okJson("""
                         {"results":[{"id":"589827","key":"ATLAS"}]}
                         """)));
+        stubLandingPageExists();
         wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: billing-service")))
                 .willReturn(okJson("""
-                        {"id":"NEW123","title":"billing-service"}
+                        {"id":"NEW123","title":"Service: billing-service"}
                         """)));
 
         Service s = new Service();
@@ -92,20 +112,26 @@ class SyncCoordinatorIntegrationTest {
         assertThat(reloaded.getLastSyncedToConfluence()).isNotNull();
 
         wireMock.verify(postRequestedFor(urlPathEqualTo("/api/v2/pages"))
-                .withRequestBody(matchingJsonPath("$.title", equalTo("billing-service")))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: billing-service")))
                 .withRequestBody(matchingJsonPath("$.spaceId", equalTo("589827")))
+                .withRequestBody(matchingJsonPath("$.parentId", equalTo(LANDING_ID)))
                 .withRequestBody(matchingJsonPath("$.body.representation", equalTo("storage"))));
     }
 
     @Test
     void whenServiceAlreadyHasPageId_thenUpdatesPageAndKeepsId() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("""
+                        {"results":[{"id":"589827","key":"ATLAS"}]}
+                        """)));
+        stubLandingPageExists();
         wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/EXISTING123"))
                 .willReturn(okJson("""
-                        {"id":"EXISTING123","title":"checkout-service","version":{"number":3}}
+                        {"id":"EXISTING123","title":"Service: checkout-service","version":{"number":3}}
                         """)));
         wireMock.stubFor(put(urlPathEqualTo("/api/v2/pages/EXISTING123"))
                 .willReturn(okJson("""
-                        {"id":"EXISTING123","title":"checkout-service","version":{"number":4}}
+                        {"id":"EXISTING123","title":"Service: checkout-service","version":{"number":4}}
                         """)));
 
         Service s = new Service();
@@ -123,7 +149,8 @@ class SyncCoordinatorIntegrationTest {
         assertThat(reloaded.getLastSyncedToConfluence()).isNotNull();
 
         wireMock.verify(putRequestedFor(urlPathEqualTo("/api/v2/pages/EXISTING123"))
-                .withRequestBody(matchingJsonPath("$.title", equalTo("checkout-service")))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: checkout-service")))
+                .withRequestBody(matchingJsonPath("$.parentId", equalTo(LANDING_ID)))
                 .withRequestBody(matchingJsonPath("$.body.representation", equalTo("storage")))
                 .withRequestBody(matchingJsonPath("$.body.value", containing("<h2>Overview</h2>")))
                 .withRequestBody(matchingJsonPath("$.version.number", equalTo("4"))));
@@ -131,13 +158,15 @@ class SyncCoordinatorIntegrationTest {
 
     @Test
     void whenUpdateReturns404_thenCoordinatorRecreatesPageAndPersistsNewId() {
-        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/STALE_ID"))
-                .willReturn(aResponse().withStatus(404).withBody("page deleted")));
         wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
                 .willReturn(okJson("""
                         {"results":[{"id":"589827","key":"ATLAS"}]}
                         """)));
+        stubLandingPageExists();
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/STALE_ID"))
+                .willReturn(aResponse().withStatus(404).withBody("page deleted")));
         wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: orphan-service")))
                 .willReturn(okJson("""
                         {"id":"FRESH_ID"}
                         """)));
@@ -158,7 +187,7 @@ class SyncCoordinatorIntegrationTest {
         assertThat(reloaded.getLastSyncedToConfluence()).isNotNull();
 
         wireMock.verify(postRequestedFor(urlPathEqualTo("/api/v2/pages"))
-                .withRequestBody(matchingJsonPath("$.title", equalTo("orphan-service"))));
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: orphan-service"))));
     }
 
     @Test
@@ -179,16 +208,17 @@ class SyncCoordinatorIntegrationTest {
                 .willReturn(okJson("""
                         {"results":[{"id":"589827","key":"ATLAS"}]}
                         """)));
+        stubLandingPageExists();
         wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
-                .withRequestBody(matchingJsonPath("$.title", equalTo("svc-good-1")))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: svc-good-1")))
                 .willReturn(okJson("""
                         {"id":"PAGE_GOOD_1"}
                         """)));
         wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
-                .withRequestBody(matchingJsonPath("$.title", equalTo("svc-bad")))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: svc-bad")))
                 .willReturn(aResponse().withStatus(500).withBody("boom")));
         wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
-                .withRequestBody(matchingJsonPath("$.title", equalTo("svc-good-2")))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: svc-good-2")))
                 .willReturn(okJson("""
                         {"id":"PAGE_GOOD_2"}
                         """)));

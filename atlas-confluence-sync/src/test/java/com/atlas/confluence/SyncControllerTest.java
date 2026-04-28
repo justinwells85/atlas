@@ -59,10 +59,22 @@ class SyncControllerTest {
     @Autowired
     ServiceRepository serviceRepository;
 
+    private static final String LANDING_ID = "LANDING";
+
     @BeforeEach
     void resetState() {
         wireMock.resetAll();
         serviceRepository.deleteAll();
+    }
+
+    private void stubLandingPageExists() {
+        wireMock.stubFor(WireMock.get(WireMock.urlPathEqualTo("/api/v2/pages"))
+                .withQueryParam("title", WireMock.containing("Atlas"))
+                .willReturn(WireMock.okJson("{\"results\":[{\"id\":\"" + LANDING_ID + "\"}]}")));
+        wireMock.stubFor(WireMock.get(WireMock.urlPathEqualTo("/api/v2/pages/" + LANDING_ID))
+                .willReturn(WireMock.okJson("{\"id\":\"" + LANDING_ID + "\",\"version\":{\"number\":1}}")));
+        wireMock.stubFor(WireMock.put(WireMock.urlPathEqualTo("/api/v2/pages/" + LANDING_ID))
+                .willReturn(WireMock.okJson("{\"id\":\"" + LANDING_ID + "\",\"version\":{\"number\":2}}")));
     }
 
     @Test
@@ -71,7 +83,9 @@ class SyncControllerTest {
                 .willReturn(WireMock.okJson("""
                         {"results":[{"id":"589827","key":"ATLAS"}]}
                         """)));
+        stubLandingPageExists();
         wireMock.stubFor(WireMock.post(WireMock.urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(WireMock.matchingJsonPath("$.title", WireMock.equalTo("Service: svc-x")))
                 .willReturn(WireMock.okJson("""
                         {"id":"NEW123"}
                         """)));
@@ -94,7 +108,9 @@ class SyncControllerTest {
                 .willReturn(WireMock.okJson("""
                         {"results":[{"id":"589827","key":"ATLAS"}]}
                         """)));
+        stubLandingPageExists();
         wireMock.stubFor(WireMock.post(WireMock.urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(WireMock.matchingJsonPath("$.title", WireMock.equalTo("Service: svc-one")))
                 .willReturn(WireMock.okJson("""
                         {"id":"PAGE_X"}
                         """)));

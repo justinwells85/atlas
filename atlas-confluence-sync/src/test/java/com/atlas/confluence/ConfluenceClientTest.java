@@ -92,7 +92,7 @@ class ConfluenceClientTest {
                                 {"id":"123456","title":"billing-service","spaceId":"589827"}
                                 """)));
 
-        String pageId = client.createPage("589827", "billing-service", "<h2>Overview</h2>");
+        String pageId = client.createPage("589827", "billing-service", "<h2>Overview</h2>", null);
 
         assertThat(pageId).isEqualTo("123456");
         wireMock.verify(postRequestedFor(urlPathEqualTo("/api/v2/pages"))
@@ -116,7 +116,7 @@ class ConfluenceClientTest {
         wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/STALE"))
                 .willReturn(aResponse().withStatus(404).withBody("not found")));
 
-        assertThatThrownBy(() -> client.updatePage("STALE", "title", "<h2>body</h2>"))
+        assertThatThrownBy(() -> client.updatePage("STALE", "title", "<h2>body</h2>", null))
                 .isInstanceOf(ConfluencePageNotFoundException.class)
                 .hasMessageContaining("STALE");
     }
@@ -132,7 +132,7 @@ class ConfluenceClientTest {
                         {"id":"123456","title":"billing-service","version":{"number":4}}
                         """)));
 
-        client.updatePage("123456", "billing-service", "<h2>Overview</h2> updated");
+        client.updatePage("123456", "billing-service", "<h2>Overview</h2> updated", null);
 
         wireMock.verify(getRequestedFor(urlPathEqualTo("/api/v2/pages/123456")));
         wireMock.verify(putRequestedFor(urlPathEqualTo("/api/v2/pages/123456"))

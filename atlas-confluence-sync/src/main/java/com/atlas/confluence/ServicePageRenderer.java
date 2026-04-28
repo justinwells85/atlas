@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Renders a {@link ServicePageContext} as a Confluence storage-format string —
@@ -85,7 +86,7 @@ public class ServicePageRenderer {
                 sb.append(" (auth: ").append(escape(pres.api().authMethod())).append(")");
             }
             if (!pres.consumers().isEmpty()) {
-                sb.append("<br/>Consumers: ").append(joinConsumerNames(pres.consumers()));
+                sb.append("<br/>Consumers: ").append(joinConsumerNames(pres.consumers(), ctx.serviceConfluencePageUrls()));
             }
             sb.append("</li>\n");
         }
@@ -122,7 +123,9 @@ public class ServicePageRenderer {
         } else {
             sb.append("<ul>\n");
             for (ServiceDependencyEdge edge : ctx.upstreamServices()) {
-                sb.append("<li><strong>").append(escape(edge.upstreamServiceName())).append("</strong>");
+                sb.append("<li><strong>")
+                        .append(renderServiceLink(edge.upstreamServiceId(), edge.upstreamServiceName(), ctx.serviceConfluencePageUrls()))
+                        .append("</strong>");
                 if (hasText(edge.description())) {
                     sb.append(" — ").append(escape(edge.description()));
                 }
@@ -137,7 +140,9 @@ public class ServicePageRenderer {
         } else {
             sb.append("<ul>\n");
             for (ServiceDependencyEdge edge : ctx.downstreamServices()) {
-                sb.append("<li><strong>").append(escape(edge.downstreamServiceName())).append("</strong>");
+                sb.append("<li><strong>")
+                        .append(renderServiceLink(edge.downstreamServiceId(), edge.downstreamServiceName(), ctx.serviceConfluencePageUrls()))
+                        .append("</strong>");
                 if (hasText(edge.description())) {
                     sb.append(" — ").append(escape(edge.description()));
                 }
@@ -264,13 +269,29 @@ public class ServicePageRenderer {
         return "<a href=\"" + escape(href) + "\">" + escape(text) + "</a>";
     }
 
-    private String joinConsumerNames(List<ApiConsumer> consumers) {
+    private String joinConsumerNames(List<ApiConsumer> consumers, Map<UUID, String> urls) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < consumers.size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append(escape(consumers.get(i).consumerServiceName()));
+            ApiConsumer c = consumers.get(i);
+            sb.append(renderServiceLink(c.consumerServiceId(), c.consumerServiceName(), urls));
         }
         return sb.toString();
+    }
+
+    /**
+     * If the referenced service has a Confluence page URL on the context map,
+     * render its name as a hyperlink. Otherwise (peer not yet synced, or map
+     * unavailable), fall back to plain text — readers still see the name,
+     * just not clickable. Eventual consistency: the next sync round picks up
+     * the link once the peer page exists.
+     */
+    private String renderServiceLink(UUID serviceId, String name, Map<UUID, String> urls) {
+        String url = (urls == null || serviceId == null) ? null : urls.get(serviceId);
+        if (url == null || url.isBlank()) {
+            return escape(name);
+        }
+        return renderLink(url, name);
     }
 
     private String statusLabel(ServiceStatus status) {

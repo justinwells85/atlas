@@ -11,8 +11,10 @@ import org.springframework.web.client.RestClient;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Thin wrapper over the Confluence Cloud v2 REST API. The architectural seam
@@ -55,15 +57,40 @@ public class ConfluenceClient {
         return (String) results.get(0).get("id");
     }
 
-    /** Create a new page at space root. Returns the new page's ID. */
-    public String createPage(String spaceId, String title, String storageBody) {
-        Map<String, Object> body = Map.of(
-                "spaceId", spaceId,
-                "status", "current",
-                "title", title,
-                "body", Map.of(
-                        "representation", "storage",
-                        "value", storageBody));
+    /**
+     * Look up a page by exact title within a space. Used to resolve well-known
+     * pages (landing page, inventory pages) without storing their IDs in our
+     * DB — Confluence is the source of truth for page IDs.
+     */
+    public Optional<String> findPageByTitle(String spaceId, String title) {
+        Map<String, Object> resp = http.get()
+                .uri(uri -> uri.path("/api/v2/pages")
+                        .queryParam("space-id", spaceId)
+                        .queryParam("title", title)
+                        .build())
+                .retrieve()
+                .body(MAP_TYPE);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> results = (List<Map<String, Object>>) resp.get("results");
+        if (results == null || results.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable((String) results.get(0).get("id"));
+    }
+
+    /**
+     * Create a new page. Pass {@code parentId = null} for a top-level page in
+     * the space; pass a parent page ID to nest the new page underneath it.
+     */
+    public String createPage(String spaceId, String title, String storageBody, String parentId) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("spaceId", spaceId);
+        body.put("status", "current");
+        body.put("title", title);
+        body.put("body", Map.of("representation", "storage", "value", storageBody));
+        if (parentId != null && !parentId.isBlank()) {
+            body.put("parentId", parentId);
+        }
 
         Map<String, Object> resp = http.post()
                 .uri("/api/v2/pages")
@@ -78,9 +105,11 @@ public class ConfluenceClient {
     /**
      * Update an existing page. Confluence v2 PUT requires the next version
      * number, so this method first GETs the current page to read its version,
-     * then PUTs with version.number + 1.
+     * then PUTs with version.number + 1. Pass {@code parentId} to re-parent
+     * the page (useful when migrating pages under a new landing page); pass
+     * {@code null} to leave the parent as-is.
      */
-    public void updatePage(String pageId, String title, String storageBody) {
+    public void updatePage(String pageId, String title, String storageBody, String parentId) {
         Map<String, Object> existing;
         try {
             existing = http.get()
@@ -95,16 +124,15 @@ public class ConfluenceClient {
         Map<String, Object> version = (Map<String, Object>) existing.get("version");
         int nextVersion = ((Number) version.get("number")).intValue() + 1;
 
-        Map<String, Object> body = Map.of(
-                "id", pageId,
-                "status", "current",
-                "title", title,
-                "body", Map.of(
-                        "representation", "storage",
-                        "value", storageBody),
-                "version", Map.of(
-                        "number", nextVersion,
-                        "message", "Atlas sync"));
+        Map<String, Object> body = new HashMap<>();
+        body.put("id", pageId);
+        body.put("status", "current");
+        body.put("title", title);
+        body.put("body", Map.of("representation", "storage", "value", storageBody));
+        body.put("version", Map.of("number", nextVersion, "message", "Atlas sync"));
+        if (parentId != null && !parentId.isBlank()) {
+            body.put("parentId", parentId);
+        }
 
         http.put()
                 .uri("/api/v2/pages/{id}", pageId)
