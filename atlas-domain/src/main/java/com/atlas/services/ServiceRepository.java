@@ -40,4 +40,28 @@ public interface ServiceRepository extends JpaRepository<Service, UUID> {
     @Query(value = "UPDATE services SET confluence_page_id = NULL WHERE id = :id",
             nativeQuery = true)
     void clearConfluencePageId(@Param("id") UUID id);
+
+    /**
+     * Look up a service by name *including* soft-deleted rows — bypasses the
+     * entity-level {@code @SQLRestriction} filter. Used by intake to detect
+     * the "name held by a soft-deleted row" case so it can reactivate the
+     * existing UUID instead of failing the UNIQUE constraint at INSERT time.
+     */
+    @Query(value = "SELECT * FROM services WHERE name = :name", nativeQuery = true)
+    Optional<Service> findByNameIncludingDeleted(@Param("name") String name);
+
+    /**
+     * Reactivate a soft-deleted service: clear {@code deleted_at} so the
+     * row is visible again to JPA queries, and clear the Confluence-sync
+     * state so the next sync produces a fresh page. Caller is expected to
+     * follow up with field updates via the JPA entity (now visible) and
+     * {@code save()}.
+     */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE services SET deleted_at = NULL, " +
+            "confluence_page_id = NULL, last_synced_to_confluence = NULL " +
+            "WHERE id = :id",
+            nativeQuery = true)
+    void reactivate(@Param("id") UUID id);
 }

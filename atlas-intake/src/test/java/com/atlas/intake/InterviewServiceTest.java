@@ -16,6 +16,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -129,6 +130,67 @@ class InterviewServiceTest {
         r = interviewService.next(r.state(), "payments-svc-v2");
         assertThat(r.state().draft().name()).isEqualTo("payments-svc-v2");
         assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_DESCRIPTION);
+    }
+
+    // -----------------------------------------------------------------------
+    // Reactivate flow (ADR-014 / DD-013 caveat)
+    // -----------------------------------------------------------------------
+
+    @Test
+    void whenNameMatchesSoftDeletedRow_thenInterviewReactivatesItKeepingTheSameUuid() {
+        // Arrange: a service that was created, then soft-deleted.
+        Service original = new Service();
+        original.setName("revival-service");
+        original.setOwnerTeam("old-team");
+        original.setStatus(ServiceStatus.ACTIVE);
+        original.setDescription("Original description");
+        Service saved = repository.saveAndFlush(original);
+        UUID originalId = saved.getId();
+        // Soft-delete via repository.delete() — @SQLDelete rewrites to UPDATE.
+        repository.delete(saved);
+        // Confirm it's invisible to JPA.
+        assertThat(repository.findByName("revival-service")).isEmpty();
+        assertThat(repository.findByNameIncludingDeleted("revival-service"))
+                .isPresent()
+                .get().extracting(Service::getDeletedAt).isNotNull();
+
+        // Act: run intake with the same name; it should not error at the
+        // name stage and should reactivate at persist time.
+        InterviewService.TurnResult r = startWithRequiredFields("revival-service", "new-team");
+        r = skipAllOptionalsAndSections(r);
+
+        // Assert: persisted, same UUID, deleted_at cleared, fields updated.
+        assertThat(r.complete()).isTrue();
+        assertThat(r.serviceId()).isEqualTo(originalId);
+
+        Optional<Service> persisted = repository.findById(originalId);
+        assertThat(persisted).isPresent();
+        assertThat(persisted.get().getDeletedAt()).isNull();
+        assertThat(persisted.get().getOwnerTeam()).isEqualTo("new-team");
+        assertThat(persisted.get().getConfluencePageId()).isNull();
+
+        // Audit row written with change_type = 'reactivated'.
+        Long reactivatedCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM service_changes " +
+                        "WHERE service_id = ? AND change_type = 'reactivated'",
+                Long.class, originalId);
+        assertThat(reactivatedCount).isEqualTo(1L);
+    }
+
+    @Test
+    void whenNameMatchesActiveRow_thenInterviewStillSurfacesConflict() {
+        // The reactivate path must NOT engage when the existing row is active.
+        Service active = new Service();
+        active.setName("alive-service");
+        active.setStatus(ServiceStatus.ACTIVE);
+        repository.saveAndFlush(active);
+
+        InterviewService.TurnResult r = interviewService.next(null, null);
+        r = interviewService.next(r.state(), "alive-service");
+
+        assertThat(r.complete()).isFalse();
+        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_NAME);
+        assertThat(r.question()).contains("already exists");
     }
 
     // -----------------------------------------------------------------------

@@ -232,6 +232,28 @@ public class ServiceRelationshipsRepository {
                         rs.getString("description")));
     }
 
+    /**
+     * Clear every relationship row attached to a service: APIs the service
+     * exposes, edges where it's upstream or downstream, databases it uses,
+     * external dependencies it consumes, and any rows where it consumes
+     * another service's API. Used by intake's reactivate path (ADR-014) so
+     * a re-registered service starts with a clean relationship slate; new
+     * intake answers then re-populate as needed.
+     *
+     * Deletes are issued in dependency order: api_consumers rows where this
+     * service is the consumer go first, then apis (cascades to remaining
+     * api_consumers via FK), then the service_* link tables.
+     */
+    public void clearAllRelationshipsForService(UUID serviceId) {
+        jdbc.update("DELETE FROM api_consumers WHERE consumer_service_id = ?", serviceId);
+        jdbc.update("DELETE FROM apis WHERE service_id = ?", serviceId);
+        jdbc.update("DELETE FROM service_dependencies " +
+                        "WHERE upstream_service_id = ? OR downstream_service_id = ?",
+                serviceId, serviceId);
+        jdbc.update("DELETE FROM service_databases WHERE service_id = ?", serviceId);
+        jdbc.update("DELETE FROM service_external_deps WHERE service_id = ?", serviceId);
+    }
+
     public List<ApiConsumer> findApiConsumersFor(UUID apiId) {
         return jdbc.query(
                 "SELECT ac.consumer_service_id, s.name AS consumer_name, ac.description " +

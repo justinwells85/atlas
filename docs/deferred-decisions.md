@@ -18,7 +18,7 @@ Newest at top.
 
 Verified live: a soft-deleted service's Confluence page is removed on the next sync; the row stays with `deleted_at` set and `confluence_page_id` nulled; re-running sync is a no-op on cleaned rows. Re-activation (clearing `deleted_at`) creates a fresh page on the next sync.
 
-Caveat: the unique constraint on `services.name` is still in effect across soft-deleted rows — reusing a name in a fresh INSERT will fail until the soft-deleted row is hard-deleted. ADR-014 lists three remediation paths if this becomes a real workflow.
+Caveat (since handled): the unique constraint on `services.name` is still in effect across soft-deleted rows. Rather than work around the constraint, intake **reactivates** the existing soft-deleted row when its name is reused — clears `deleted_at` + sync state, **clears every attached relationship row** (so the new intake's relationship inserts don't hit per-table UNIQUE), applies the new draft fields, audits a `reactivated` change-type. Same UUID preserved; next sync produces a fresh Confluence page. See ADR-014 for the full pattern.
 
 **Below preserved as the original deferred entry for historical context.**
 

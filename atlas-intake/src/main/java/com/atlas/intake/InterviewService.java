@@ -294,9 +294,14 @@ public class InterviewService {
         return switch (s.stage()) {
             case AWAITING_NAME -> {
                 if (trimmed.isEmpty()) yield s.withError("Name cannot be blank.");
-                if (repository.existsByName(trimmed)) {
+                Optional<Service> existing = repository.findByNameIncludingDeleted(trimmed);
+                if (existing.isPresent() && existing.get().getDeletedAt() == null) {
                     yield s.withError("A service named '" + trimmed + "' already exists.");
                 }
+                // If the match is soft-deleted, fall through silently — the
+                // persist step will reactivate the row instead of inserting
+                // a duplicate (ADR-014 / DD-013 caveat). The user keeps
+                // typing answers; the reactivation is transparent.
                 yield s.withDraft(s.draft().withName(trimmed)).clearError();
             }
             case AWAITING_DESCRIPTION -> {
@@ -615,23 +620,37 @@ public class InterviewService {
 
     private TurnResult persistAndComplete(InterviewState s) {
         ServiceDraft d = s.draft();
-        Service entity = new Service();
-        entity.setName(d.name());
-        entity.setDescription(d.description());
-        entity.setOwnerTeam(d.ownerTeam());
-        entity.setStatus(d.status());
-        entity.setLanguage(d.language());
-        entity.setFramework(d.framework());
-        entity.setRepoUrl(d.repoUrl());
-        entity.setDeployment(d.deployment());
-        entity.setSupportContact(d.supportContact());
-        entity.setSla(d.sla());
-        entity.setNotes(d.notes());
-        // saveAndFlush so the services row is visible to the JdbcTemplate
-        // inserts below — JPA's persistence context wouldn't otherwise flush
-        // until transaction commit, and the relationship inserts would hit
-        // a foreign-key violation.
-        Service saved = repository.saveAndFlush(entity);
+
+        // ADR-014 / DD-013: if a soft-deleted row holds this name, reactivate
+        // it (clear deleted_at + sync state, preserve UUID + audit history)
+        // rather than INSERTing a duplicate that would fail the UNIQUE name
+        // constraint. Otherwise INSERT a fresh row.
+        Optional<Service> existingDeleted = repository.findByNameIncludingDeleted(d.name())
+                .filter(svc -> svc.getDeletedAt() != null);
+
+        Service saved;
+        String changeType;
+        if (existingDeleted.isPresent()) {
+            UUID id = existingDeleted.get().getId();
+            repository.reactivate(id);  // native UPDATE clears deleted_at + sync state
+            // Clear any relationship rows that survived the soft-delete so the
+            // intake's about-to-run inserts don't hit per-table UNIQUE
+            // constraints. Same-UUID reactivation is a clean restart on the
+            // services row; relationships re-populate from the new intake.
+            relationships.clearAllRelationshipsForService(id);
+            // After reactivation the row is visible to JPA queries (deleted_at IS NULL).
+            Service entity = repository.findById(id).orElseThrow(() ->
+                    new IllegalStateException("Reactivated service " + id + " not visible after UPDATE"));
+            applyDraftFields(entity, d);
+            saved = repository.saveAndFlush(entity);
+            changeType = "reactivated";
+        } else {
+            Service entity = new Service();
+            entity.setName(d.name());
+            applyDraftFields(entity, d);
+            saved = repository.saveAndFlush(entity);
+            changeType = "created";
+        }
         UUID serviceId = saved.getId();
 
         for (ApiDraft api : s.apis()) {
@@ -663,10 +682,29 @@ public class InterviewService {
             relationships.insertServiceExternalDepLink(serviceId, externalDepId, usage.description());
         }
 
-        relationships.insertServiceChange(serviceId, "intake-agent", "created",
-                "Service registered via intake interview.");
+        String summary = "reactivated".equals(changeType)
+                ? "Service reactivated via intake interview (was soft-deleted)."
+                : "Service registered via intake interview.";
+        relationships.insertServiceChange(serviceId, "intake-agent", changeType, summary);
 
         return new TurnResult(s.clearError(), null, true, serviceId);
+    }
+
+    /**
+     * Copy services-row fields from the in-progress draft onto an entity —
+     * shared by the create-fresh and reactivate paths.
+     */
+    private void applyDraftFields(Service entity, ServiceDraft d) {
+        entity.setDescription(d.description());
+        entity.setOwnerTeam(d.ownerTeam());
+        entity.setStatus(d.status());
+        entity.setLanguage(d.language());
+        entity.setFramework(d.framework());
+        entity.setRepoUrl(d.repoUrl());
+        entity.setDeployment(d.deployment());
+        entity.setSupportContact(d.supportContact());
+        entity.setSla(d.sla());
+        entity.setNotes(d.notes());
     }
 
     // -----------------------------------------------------------------------
