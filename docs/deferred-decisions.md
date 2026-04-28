@@ -10,6 +10,26 @@ Newest at top.
 
 ---
 
+## DD-013 — Confluence orphan-page cleanup when a service is deleted from the DB
+
+**Status**: Deferred. *Carved out of DD-011 during the Phase 4.5 layout work.*
+
+When a service is deleted from the Atlas database, its Confluence page becomes orphaned — the sync agent does not currently delete pages for services that no longer exist. The detection logic isn't trivial because the only handle to a service's page (`services.confluence_page_id`) disappears together with the row.
+
+**Why deferred**: requires a data-model change to retain the link after the source row is gone — either (a) a soft-delete column (`services.deleted_at`) so the row stays around with `confluence_page_id` intact, or (b) a separate `deleted_services_pages` shadow table populated on DELETE that the sync pass scans for cleanup. Neither is a code-only change.
+
+**Trigger to revisit**: the first time a real service in production is deprecated/decommissioned and its inventory entry is removed. Before then, manual page deletion via the Confluence UI is acceptable.
+
+**Remediation sketch**:
+
+1. Decide between soft-delete column vs. shadow table. Soft-delete is simpler at one column's cost; shadow table keeps the active `services` table clean.
+2. Either way: add a Flyway migration introducing the chosen mechanism.
+3. Update intake / MCP `update_service` paths to write the deletion signal instead of (or alongside) the hard DELETE.
+4. Add a sync-pass step in `SyncCoordinator` that finds rows-marked-deleted (or shadow-table entries) and calls `DELETE /wiki/api/v2/pages/{id}` for each, logging successes and failures.
+5. Tests via WireMock for the cleanup path; integration test for the full delete → re-sync flow.
+
+---
+
 ## DD-012 — Internal LLM gateway implementation (`InternalLlmGateway`) is a stub
 
 **Status**: Deferred. *Phase 5.5 M6 introduced the abstraction; the second impl is pending the org-LLM-gateway spec.*
@@ -50,9 +70,17 @@ The interface itself (`LlmGateway.complete(String) → String`) is expected to f
 
 ---
 
-## DD-011 — Confluence space layout: implementation lags the proposed structure
+## DD-011 — Confluence space layout: implementation lags the proposed structure — RESOLVED (mostly)
 
-**Status**: Deferred. *Pending stakeholder feedback on the proposal in `docs/confluence-layout.md`.*
+**Status**: Resolved in Phase 4.5 M1–M3, *except* the delete-on-DB-delete item which remains deferred (data-model gap — see DD-013 below for the standalone follow-up).
+
+**Resolution**: items 1–3 of the four-step remediation sketch landed in the Phase 4.5 commits. Service pages are now parented under a "Atlas — Service Inventory" landing page; titles are prefixed with "Service: "; service-to-service references in the rendered pages are hyperlinks to the peer's Confluence page; database and external-dependency references back-link into two new inventory pages ("Inventory: Data Stores", "Inventory: External Dependencies"); a new "About Atlas" page sits alongside. Live-verified against the dogfood ATLAS space.
+
+Item 4 (orphan-page deletion when a service is removed from the DB) is still deferred — the data model has no "service deleted" signal that survives the row's deletion. Captured separately as DD-013.
+
+**Below preserved as the original deferred entry for historical context.**
+
+---
 
 `docs/confluence-layout.md` (added separately for stakeholder socialisation) proposes a different Confluence space shape than what the M3–M5 sync agent currently produces. Current behaviour was settled in M1 as option (c) — the simplest fit for a dedicated `ATLAS` space — and works end-to-end today. The proposal asks for richer structure.
 

@@ -61,6 +61,15 @@ The MCP server is the integration boundary: any MCP-compatible client (Claude De
 
 A scheduled Spring Boot job that reads from the MCP server, transforms data into the Confluence page template (see `confluence-template.md`), and updates Confluence via the Atlassian REST API. Tracks last-sync timestamp per service to enable incremental updates.
 
+The agent maintains a structured Confluence space (see `confluence-layout.md`):
+
+- One **landing page** ("Atlas — Service Inventory") with a service-index table.
+- One **About Atlas** page explaining the auto-generation model.
+- Two **inventory sub-pages** ("Inventory: Data Stores", "Inventory: External Dependencies") presenting per-resource views.
+- One sub-page per service (titled "Service: <name>") with the seven-section template.
+
+All non-Home pages parent under the landing page. Service-to-service references render as hyperlinks to peer pages; database and external-dep references back-link to the inventory pages. Pages are regenerated on every sync — Confluence edits get overwritten.
+
 ## Data Flow
 
 1. **Intake**: Service owner runs the intake agent. Agent interviews them, validates, writes to DB.

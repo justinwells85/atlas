@@ -1,11 +1,16 @@
 # Atlas — Confluence Space Layout
 
-How Atlas-generated content is organised in Confluence: a single overview/landing page that parents one sub-page per service. This document covers the **space-wide hierarchy** and the **landing page** content. For the field-level layout of an individual service page, see `confluence-template.md`.
+How Atlas-generated content is organised in Confluence. This document covers the **space-wide hierarchy**, the **landing page**, and the **inventory + About sub-pages**. For the field-level layout of an individual service page, see `confluence-template.md`.
+
+> **Status (Phase 4.5)**: items below are implemented as described, *except* orphan-page deletion when a service is removed from the Atlas DB. That item is deferred — see `deferred-decisions.md` DD-013.
 
 ## Page Hierarchy
 
 ```
-Atlas — Service Inventory                ← overview / landing page
+Atlas — Service Inventory                ← overview / landing page (parented under space home)
+├── About Atlas                          ← what this space is, how to add a service
+├── Inventory: Data Stores               ← per-resource view of data_stores
+├── Inventory: External Dependencies     ← per-resource view of external_dependencies
 ├── Service: <service-name-A>            ← one sub-page per service
 ├── Service: <service-name-B>
 ├── Service: <service-name-C>

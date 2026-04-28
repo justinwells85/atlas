@@ -62,6 +62,16 @@ Discovery during Phase 2: the intake interview captures 4 of 17 `services` colum
 - [x] Scheduled job for periodic syncs
 - [x] Tests: sync agent against a mocked Confluence API at the architectural seam
 
+## Phase 4.5 — Confluence Layout Alignment
+
+- [x] Landing page parents service sub-pages; service titles prefixed with "Service: " (M1)
+- [x] Service-to-service references rendered as hyperlinks to peer Confluence pages (M1)
+- [x] Inventory sub-pages: "Inventory: Data Stores", "Inventory: External Dependencies" (M2)
+- [x] About Atlas page; service-page back-references to inventory pages (M3)
+- [ ] Orphan-page cleanup on service deletion — carved out as DD-013 (data-model change required)
+
+Closes DD-011 except for the orphan-cleanup item, which moved to DD-013.
+
 ## Phase 5 — End-to-End Validation
 
 - [x] Define "demo-ready service shape" as entry criterion (which fields and relationship rows must be populated for a representative demo) before kicking off this phase — see `docs/phase-5-entry-criteria.md`
