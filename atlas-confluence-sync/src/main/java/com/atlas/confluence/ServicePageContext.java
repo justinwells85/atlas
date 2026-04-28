@@ -29,5 +29,6 @@ public record ServicePageContext(
         List<DatabaseUsage> databases,
         List<ExternalDependencyUsage> externalDependencies,
         List<ChangeEntry> recentChanges,
-        Map<UUID, String> serviceConfluencePageUrls) {
+        Map<UUID, String> serviceConfluencePageUrls,
+        InventoryPageUrls inventoryPageUrls) {
 }

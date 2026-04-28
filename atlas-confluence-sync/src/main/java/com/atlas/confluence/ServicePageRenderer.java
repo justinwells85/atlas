@@ -100,9 +100,16 @@ public class ServicePageRenderer {
         if (ctx.databases().isEmpty()) {
             appendThinNote(sb, "No databases documented yet.");
         } else {
+            String dsInventoryUrl = ctx.inventoryPageUrls() == null ? null : ctx.inventoryPageUrls().dataStores();
             sb.append("<ul>\n");
             for (DatabaseUsage db : ctx.databases()) {
-                sb.append("<li><strong>").append(escape(db.databaseName())).append("</strong>");
+                sb.append("<li><strong>");
+                if (dsInventoryUrl != null && !dsInventoryUrl.isBlank()) {
+                    sb.append(renderLink(dsInventoryUrl, db.databaseName()));
+                } else {
+                    sb.append(escape(db.databaseName()));
+                }
+                sb.append("</strong>");
                 if (hasText(db.engine())) {
                     sb.append(" (").append(escape(db.engine())).append(")");
                 }
@@ -155,6 +162,7 @@ public class ServicePageRenderer {
         if (ctx.externalDependencies().isEmpty()) {
             appendThinNote(sb, "No external dependencies documented yet.");
         } else {
+            String edInventoryUrl = ctx.inventoryPageUrls() == null ? null : ctx.inventoryPageUrls().externalDependencies();
             sb.append("<ul>\n");
             for (ExternalDependencyUsage ext : ctx.externalDependencies()) {
                 sb.append("<li><strong>");
@@ -164,6 +172,9 @@ public class ServicePageRenderer {
                     sb.append(escape(ext.name()));
                 }
                 sb.append("</strong>");
+                if (edInventoryUrl != null && !edInventoryUrl.isBlank()) {
+                    sb.append(" (").append(renderLink(edInventoryUrl, "in inventory")).append(")");
+                }
                 if (hasText(ext.description())) {
                     sb.append(" — ").append(escape(ext.description()));
                 }

@@ -170,7 +170,8 @@ class ServicePageRendererTest {
                 s, List.of(),
                 List.of(edge),
                 List.of(), List.of(), List.of(), List.of(),
-                Map.of(upstreamId, "https://example.atlassian.net/wiki/spaces/ATLAS/pages/4242"));
+                Map.of(upstreamId, "https://example.atlassian.net/wiki/spaces/ATLAS/pages/4242"),
+                InventoryPageUrls.empty());
 
         String rendered = renderer.render(ctx);
 
@@ -192,7 +193,8 @@ class ServicePageRendererTest {
                 s, List.of(),
                 List.of(edge),
                 List.of(), List.of(), List.of(), List.of(),
-                Map.of()); // empty — peer page not yet synced
+                Map.of(), // empty — peer page not yet synced
+                InventoryPageUrls.empty());
 
         String rendered = renderer.render(ctx);
 
@@ -208,7 +210,7 @@ class ServicePageRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s,
                 List.of(new ApiPresentation(api, List.of())),
-                List.of(), List.of(), List.of(), List.of(), List.of(), Map.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
 
         String rendered = renderer.render(ctx);
 
@@ -269,7 +271,8 @@ class ServicePageRendererTest {
                 List.of(db),
                 List.of(ext),
                 List.of(change),
-                Map.of());
+                Map.of(),
+                InventoryPageUrls.empty());
     }
 
     private ServicePageContext minimalContext() {
@@ -281,7 +284,8 @@ class ServicePageRendererTest {
 
     private ServicePageContext emptyContextFor(Service s) {
         return new ServicePageContext(
-                s, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of());
+                s, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(),
+                InventoryPageUrls.empty());
     }
 
     private Service baseService() {

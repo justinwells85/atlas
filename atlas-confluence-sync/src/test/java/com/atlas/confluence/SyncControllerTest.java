@@ -62,6 +62,7 @@ class SyncControllerTest {
     private static final String LANDING_ID = "LANDING";
     private static final String DS_INV_ID = "DS_INV";
     private static final String ED_INV_ID = "ED_INV";
+    private static final String ABOUT_ID = "ABOUT";
 
     @BeforeEach
     void resetState() {
@@ -73,6 +74,7 @@ class SyncControllerTest {
         stubWellKnownPage("Atlas — Service Inventory", LANDING_ID);
         stubWellKnownPage("Inventory: Data Stores", DS_INV_ID);
         stubWellKnownPage("Inventory: External Dependencies", ED_INV_ID);
+        stubWellKnownPage("About Atlas", ABOUT_ID);
     }
 
     private void stubWellKnownPage(String title, String pageId) {
