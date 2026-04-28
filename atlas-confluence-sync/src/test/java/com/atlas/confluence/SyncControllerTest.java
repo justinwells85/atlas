@@ -60,6 +60,8 @@ class SyncControllerTest {
     ServiceRepository serviceRepository;
 
     private static final String LANDING_ID = "LANDING";
+    private static final String DS_INV_ID = "DS_INV";
+    private static final String ED_INV_ID = "ED_INV";
 
     @BeforeEach
     void resetState() {
@@ -68,13 +70,19 @@ class SyncControllerTest {
     }
 
     private void stubLandingPageExists() {
+        stubWellKnownPage("Atlas — Service Inventory", LANDING_ID);
+        stubWellKnownPage("Inventory: Data Stores", DS_INV_ID);
+        stubWellKnownPage("Inventory: External Dependencies", ED_INV_ID);
+    }
+
+    private void stubWellKnownPage(String title, String pageId) {
         wireMock.stubFor(WireMock.get(WireMock.urlPathEqualTo("/api/v2/pages"))
-                .withQueryParam("title", WireMock.containing("Atlas"))
-                .willReturn(WireMock.okJson("{\"results\":[{\"id\":\"" + LANDING_ID + "\"}]}")));
-        wireMock.stubFor(WireMock.get(WireMock.urlPathEqualTo("/api/v2/pages/" + LANDING_ID))
-                .willReturn(WireMock.okJson("{\"id\":\"" + LANDING_ID + "\",\"version\":{\"number\":1}}")));
-        wireMock.stubFor(WireMock.put(WireMock.urlPathEqualTo("/api/v2/pages/" + LANDING_ID))
-                .willReturn(WireMock.okJson("{\"id\":\"" + LANDING_ID + "\",\"version\":{\"number\":2}}")));
+                .withQueryParam("title", WireMock.equalTo(title))
+                .willReturn(WireMock.okJson("{\"results\":[{\"id\":\"" + pageId + "\"}]}")));
+        wireMock.stubFor(WireMock.get(WireMock.urlPathEqualTo("/api/v2/pages/" + pageId))
+                .willReturn(WireMock.okJson("{\"id\":\"" + pageId + "\",\"version\":{\"number\":1}}")));
+        wireMock.stubFor(WireMock.put(WireMock.urlPathEqualTo("/api/v2/pages/" + pageId))
+                .willReturn(WireMock.okJson("{\"id\":\"" + pageId + "\",\"version\":{\"number\":2}}")));
     }
 
     @Test

@@ -187,6 +187,51 @@ public class ServiceRelationshipsRepository {
                 serviceId);
     }
 
+    /**
+     * Inventory view: every data store with one row per using service (or one
+     * row with null service fields if the store has no users). Used to render
+     * the data-store inventory page.
+     */
+    public List<DataStoreInventoryRow> findAllDataStoresWithUsages() {
+        return jdbc.query(
+                "SELECT ds.id AS ds_id, ds.name AS ds_name, ds.engine AS ds_engine, " +
+                        "       s.id AS svc_id, s.name AS svc_name, sdb.is_owner, sdb.description " +
+                        "FROM data_stores ds " +
+                        "LEFT JOIN service_databases sdb ON sdb.database_id = ds.id " +
+                        "LEFT JOIN services s ON s.id = sdb.service_id " +
+                        "ORDER BY ds.name, s.name",
+                (rs, i) -> new DataStoreInventoryRow(
+                        (UUID) rs.getObject("ds_id"),
+                        rs.getString("ds_name"),
+                        rs.getString("ds_engine"),
+                        (UUID) rs.getObject("svc_id"),
+                        rs.getString("svc_name"),
+                        rs.getObject("is_owner") == null ? null : rs.getBoolean("is_owner"),
+                        rs.getString("description")));
+    }
+
+    /**
+     * Inventory view: every external dependency with one row per using service
+     * (or one row with null service fields if the dep has no users). Used to
+     * render the external-deps inventory page.
+     */
+    public List<ExternalDependencyInventoryRow> findAllExternalDependenciesWithUsages() {
+        return jdbc.query(
+                "SELECT ed.id AS ed_id, ed.name AS ed_name, ed.url AS ed_url, " +
+                        "       s.id AS svc_id, s.name AS svc_name, sed.description " +
+                        "FROM external_dependencies ed " +
+                        "LEFT JOIN service_external_deps sed ON sed.external_dependency_id = ed.id " +
+                        "LEFT JOIN services s ON s.id = sed.service_id " +
+                        "ORDER BY ed.name, s.name",
+                (rs, i) -> new ExternalDependencyInventoryRow(
+                        (UUID) rs.getObject("ed_id"),
+                        rs.getString("ed_name"),
+                        rs.getString("ed_url"),
+                        (UUID) rs.getObject("svc_id"),
+                        rs.getString("svc_name"),
+                        rs.getString("description")));
+    }
+
     public List<ApiConsumer> findApiConsumersFor(UUID apiId) {
         return jdbc.query(
                 "SELECT ac.consumer_service_id, s.name AS consumer_name, ac.description " +

@@ -45,11 +45,15 @@ public class SyncCoordinator {
     private static final Logger log = LoggerFactory.getLogger(SyncCoordinator.class);
     private static final int RECENT_CHANGES_LIMIT = 10;
     private static final String SERVICE_TITLE_PREFIX = "Service: ";
+    private static final String DATA_STORE_INVENTORY_TITLE = "Inventory: Data Stores";
+    private static final String EXTERNAL_DEP_INVENTORY_TITLE = "Inventory: External Dependencies";
 
     private final ServiceRepository serviceRepository;
     private final ServiceRelationshipsRepository relationships;
     private final ServicePageRenderer renderer;
     private final LandingPageRenderer landingRenderer;
+    private final DataStoreInventoryRenderer dataStoreInventoryRenderer;
+    private final ExternalDependencyInventoryRenderer externalDepInventoryRenderer;
     private final ConfluenceClient confluenceClient;
     private final String spaceKey;
     private final String baseUrl;
@@ -62,6 +66,8 @@ public class SyncCoordinator {
             ServiceRelationshipsRepository relationships,
             ServicePageRenderer renderer,
             LandingPageRenderer landingRenderer,
+            DataStoreInventoryRenderer dataStoreInventoryRenderer,
+            ExternalDependencyInventoryRenderer externalDepInventoryRenderer,
             ConfluenceClient confluenceClient,
             @Value("${atlas.confluence.space-key}") String spaceKey,
             @Value("${atlas.confluence.base-url}") String baseUrl,
@@ -70,6 +76,8 @@ public class SyncCoordinator {
         this.relationships = relationships;
         this.renderer = renderer;
         this.landingRenderer = landingRenderer;
+        this.dataStoreInventoryRenderer = dataStoreInventoryRenderer;
+        this.externalDepInventoryRenderer = externalDepInventoryRenderer;
         this.confluenceClient = confluenceClient;
         this.spaceKey = spaceKey;
         this.baseUrl = baseUrl;
@@ -105,12 +113,23 @@ public class SyncCoordinator {
             }
         }
 
-        // Re-render landing page with the up-to-date service list (some
-        // services may have just been created and now have page URLs).
+        // Refresh the landing page + the two inventory pages with the
+        // up-to-date service list and per-resource usage data. All three are
+        // best-effort — failures here are logged but don't fail the sync.
         try {
             updateLandingPage(landingId, services, servicePageUrls);
         } catch (Exception e) {
             log.warn("Landing page refresh failed: {}", e.getMessage());
+        }
+        try {
+            updateDataStoreInventoryPage(resolvedSpaceId, landingId, servicePageUrls);
+        } catch (Exception e) {
+            log.warn("Data-store inventory refresh failed: {}", e.getMessage());
+        }
+        try {
+            updateExternalDepInventoryPage(resolvedSpaceId, landingId, servicePageUrls);
+        } catch (Exception e) {
+            log.warn("External-dependency inventory refresh failed: {}", e.getMessage());
         }
 
         return new SyncResult(successes, failures.size(), failures);
@@ -126,14 +145,25 @@ public class SyncCoordinator {
             String landingId = ensureLandingPage(resolvedSpaceId, allServices);
             Map<UUID, String> servicePageUrls = buildServicePageUrls(allServices);
             syncOneInternal(s, resolvedSpaceId, landingId, servicePageUrls);
-            // Refresh landing page so the service-index table reflects any changes.
+            // Refresh landing + inventory pages so the service-index and
+            // per-resource usage tables reflect any changes.
+            if (s.getConfluencePageId() != null) {
+                servicePageUrls.put(s.getId(), pageUrlFor(s.getConfluencePageId()));
+            }
             try {
-                if (s.getConfluencePageId() != null) {
-                    servicePageUrls.put(s.getId(), pageUrlFor(s.getConfluencePageId()));
-                }
                 updateLandingPage(landingId, allServices, servicePageUrls);
             } catch (Exception e) {
                 log.warn("Landing page refresh failed: {}", e.getMessage());
+            }
+            try {
+                updateDataStoreInventoryPage(resolvedSpaceId, landingId, servicePageUrls);
+            } catch (Exception e) {
+                log.warn("Data-store inventory refresh failed: {}", e.getMessage());
+            }
+            try {
+                updateExternalDepInventoryPage(resolvedSpaceId, landingId, servicePageUrls);
+            } catch (Exception e) {
+                log.warn("External-dependency inventory refresh failed: {}", e.getMessage());
             }
             return new SyncResult(1, 0, List.of());
         } catch (Exception e) {
@@ -202,6 +232,48 @@ public class SyncCoordinator {
                                    Map<UUID, String> servicePageUrls) {
         String body = landingRenderer.render(services, servicePageUrls, OffsetDateTime.now());
         confluenceClient.updatePage(landingId, landingPageTitle, body, null);
+    }
+
+    /**
+     * Lookup-or-create the data-store inventory page (parented under the
+     * landing page), then PUT a fresh body containing every data store and
+     * its using services.
+     */
+    private void updateDataStoreInventoryPage(String resolvedSpaceId, String landingId,
+                                              Map<UUID, String> servicePageUrls) {
+        String body = dataStoreInventoryRenderer.render(
+                relationships.findAllDataStoresWithUsages(),
+                servicePageUrls,
+                OffsetDateTime.now());
+        String pageId = confluenceClient.findPageByTitle(resolvedSpaceId, DATA_STORE_INVENTORY_TITLE)
+                .orElse(null);
+        if (pageId == null) {
+            log.info("Creating data-store inventory page in space {}", resolvedSpaceId);
+            confluenceClient.createPage(resolvedSpaceId, DATA_STORE_INVENTORY_TITLE, body, landingId);
+        } else {
+            confluenceClient.updatePage(pageId, DATA_STORE_INVENTORY_TITLE, body, landingId);
+        }
+    }
+
+    /**
+     * Lookup-or-create the external-dependency inventory page (parented under
+     * the landing page), then PUT a fresh body containing every external dep
+     * and its using services.
+     */
+    private void updateExternalDepInventoryPage(String resolvedSpaceId, String landingId,
+                                                Map<UUID, String> servicePageUrls) {
+        String body = externalDepInventoryRenderer.render(
+                relationships.findAllExternalDependenciesWithUsages(),
+                servicePageUrls,
+                OffsetDateTime.now());
+        String pageId = confluenceClient.findPageByTitle(resolvedSpaceId, EXTERNAL_DEP_INVENTORY_TITLE)
+                .orElse(null);
+        if (pageId == null) {
+            log.info("Creating external-dependency inventory page in space {}", resolvedSpaceId);
+            confluenceClient.createPage(resolvedSpaceId, EXTERNAL_DEP_INVENTORY_TITLE, body, landingId);
+        } else {
+            confluenceClient.updatePage(pageId, EXTERNAL_DEP_INVENTORY_TITLE, body, landingId);
+        }
     }
 
     private Map<UUID, String> buildServicePageUrls(List<Service> services) {

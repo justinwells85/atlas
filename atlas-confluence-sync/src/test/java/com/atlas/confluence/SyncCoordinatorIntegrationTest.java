@@ -36,6 +36,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SyncCoordinatorIntegrationTest {
 
     private static final String LANDING_ID = "LANDING";
+    private static final String DS_INV_ID = "DS_INV";
+    private static final String ED_INV_ID = "ED_INV";
 
     @Container
     @ServiceConnection
@@ -68,19 +70,25 @@ class SyncCoordinatorIntegrationTest {
     }
 
     /**
-     * Stub the landing-page interactions so each test can focus on the
-     * service-page assertions. Pretends the landing page already exists at
-     * {@link #LANDING_ID}; coordinator finds it on lookup, then GETs version
-     * + PUTs the refreshed body after services are synced.
+     * Stub the well-known page interactions (landing + two inventory pages)
+     * so each test can focus on its service-page assertions. Pretends each
+     * page already exists; coordinator finds them on lookup, then GETs
+     * version + PUTs the refreshed body during the sync.
      */
     private void stubLandingPageExists() {
+        stubWellKnownPage("Atlas — Service Inventory", LANDING_ID);
+        stubWellKnownPage("Inventory: Data Stores", DS_INV_ID);
+        stubWellKnownPage("Inventory: External Dependencies", ED_INV_ID);
+    }
+
+    private void stubWellKnownPage(String title, String pageId) {
         wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages"))
-                .withQueryParam("title", containing("Atlas"))
-                .willReturn(okJson("{\"results\":[{\"id\":\"" + LANDING_ID + "\"}]}")));
-        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/" + LANDING_ID))
-                .willReturn(okJson("{\"id\":\"" + LANDING_ID + "\",\"version\":{\"number\":1}}")));
-        wireMock.stubFor(put(urlPathEqualTo("/api/v2/pages/" + LANDING_ID))
-                .willReturn(okJson("{\"id\":\"" + LANDING_ID + "\",\"version\":{\"number\":2}}")));
+                .withQueryParam("title", equalTo(title))
+                .willReturn(okJson("{\"results\":[{\"id\":\"" + pageId + "\"}]}")));
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/" + pageId))
+                .willReturn(okJson("{\"id\":\"" + pageId + "\",\"version\":{\"number\":1}}")));
+        wireMock.stubFor(put(urlPathEqualTo("/api/v2/pages/" + pageId))
+                .willReturn(okJson("{\"id\":\"" + pageId + "\",\"version\":{\"number\":2}}")));
     }
 
     @Test
