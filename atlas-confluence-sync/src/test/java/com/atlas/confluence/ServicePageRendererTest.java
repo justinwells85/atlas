@@ -7,6 +7,7 @@ import com.atlas.services.DatabaseUsage;
 import com.atlas.services.ExternalDependencyUsage;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceDependencyEdge;
+import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceStatus;
 import org.junit.jupiter.api.Test;
 
@@ -169,7 +170,7 @@ class ServicePageRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s, List.of(),
                 List.of(edge),
-                List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
                 Map.of(upstreamId, "https://example.atlassian.net/wiki/spaces/ATLAS/pages/4242"),
                 InventoryPageUrls.empty());
 
@@ -192,7 +193,7 @@ class ServicePageRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s, List.of(),
                 List.of(edge),
-                List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
                 Map.of(), // empty — peer page not yet synced
                 InventoryPageUrls.empty());
 
@@ -210,7 +211,7 @@ class ServicePageRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s,
                 List.of(new ApiPresentation(api, List.of(), null)),
-                List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
 
         String rendered = renderer.render(ctx);
 
@@ -229,7 +230,7 @@ class ServicePageRendererTest {
                 s,
                 List.of(new ApiPresentation(api, List.of(),
                         "https://atlas.atlassian.net/wiki/spaces/ATLAS/pages/EP_HEALTH")),
-                List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
 
         String rendered = renderer.render(ctx);
 
@@ -244,7 +245,7 @@ class ServicePageRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s,
                 List.of(new ApiPresentation(api, List.of(), null)),
-                List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
 
         String rendered = renderer.render(ctx);
 
@@ -254,8 +255,167 @@ class ServicePageRendererTest {
     }
 
     // ------------------------------------------------------------------
+    // M4.5: technical details from service_metadata + fallback
+    // ------------------------------------------------------------------
+
+    @Test
+    void whenServiceMetadataHasPomLanguage_thenTechnicalDetailsRenderItWithSuffix() {
+        Service s = baseService();
+        ServiceMetadata languageObs = pomMeta(s, "language", "Java");
+        ServiceMetadata frameworkObs = pomMeta(s, "framework", "Spring Boot");
+
+        ServicePageContext ctx = contextWith(s, List.of(languageObs, frameworkObs));
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("Java")
+                .contains("Spring Boot")
+                .contains("(from pom.xml)");
+    }
+
+    @Test
+    void whenServiceMetadataAbsent_thenTechnicalDetailsFallsBackToEntityColumns() {
+        Service s = baseService();
+        s.setLanguage("Kotlin (intake)");
+        s.setFramework("Ktor (intake)");
+
+        ServicePageContext ctx = contextWith(s, List.of());
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("Kotlin (intake)")
+                .contains("Ktor (intake)")
+                .doesNotContain("(from pom.xml)");
+    }
+
+    @Test
+    void whenBothServiceMetadataAndEntityColumnPresent_thenServiceMetadataWinsForLanguage() {
+        Service s = baseService();
+        s.setLanguage("Kotlin (intake)");
+        ServiceMetadata pomLang = pomMeta(s, "language", "Java");
+
+        ServicePageContext ctx = contextWith(s, List.of(pomLang));
+
+        String rendered = renderer.render(ctx);
+
+        // pom-source wins
+        assertThat(rendered)
+                .contains("Java")
+                .contains("(from pom.xml)")
+                .doesNotContain("Kotlin (intake)");
+    }
+
+    @Test
+    void whenServiceMetadataHasBuildToolAndVersion_thenTheyAreRendered() {
+        Service s = baseService();
+        ServiceMetadata buildTool = pomMeta(s, "build_tool", "Maven");
+        ServiceMetadata langVersion = pomMeta(s, "language_version", "21");
+
+        ServicePageContext ctx = contextWith(s, List.of(buildTool, langVersion));
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("Maven")
+                .contains("21");
+    }
+
+    // ------------------------------------------------------------------
+    // M4.5: external-dependencies composition (intake + pom)
+    // ------------------------------------------------------------------
+
+    @Test
+    void whenExternalDepHasOnlyIntakeSource_thenRendersNameAndDescription() {
+        Service s = baseService();
+        ExternalDependencyUsage intake = new ExternalDependencyUsage(
+                UUID.randomUUID(), "Stripe", "https://stripe.com", "Payment processor", "intake");
+        ServicePageContext ctx = contextWithDeps(s, List.of(intake));
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("Stripe")
+                .contains("Payment processor")
+                .doesNotContain("(from pom.xml)");
+    }
+
+    @Test
+    void whenExternalDepHasOnlyPomSource_thenRendersCoordinatesWithSuffix() {
+        Service s = baseService();
+        ExternalDependencyUsage pom = new ExternalDependencyUsage(
+                UUID.randomUUID(), "com.fasterxml.jackson.core:jackson-databind", null, null, "pom-xml");
+        ServicePageContext ctx = contextWithDeps(s, List.of(pom));
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("com.fasterxml.jackson.core:jackson-databind")
+                .contains("(from pom.xml)");
+    }
+
+    @Test
+    void whenIntakeAndPomDepsOverlapByArtifactId_thenIntakeRowIsAnnotatedAndPomRowDropped() {
+        // Intake-recorded "Anthropic API" should match pom's "com.anthropic:anthropic-java"
+        // because the artifactId "anthropic-java" contains "anthropic" — case-insensitive
+        // substring match against the intake name.
+        Service s = baseService();
+        ExternalDependencyUsage intake = new ExternalDependencyUsage(
+                UUID.randomUUID(), "Anthropic API", "https://anthropic.com",
+                "LLM provider", "intake");
+        ExternalDependencyUsage pom = new ExternalDependencyUsage(
+                UUID.randomUUID(), "com.anthropic:anthropic-java", null, null, "pom-xml");
+        ServicePageContext ctx = contextWithDeps(s, List.of(intake, pom));
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("Anthropic API")
+                .contains("LLM provider")
+                .contains("matches pom: com.anthropic:anthropic-java");
+        // The pom row collapsed into the intake row's annotation; no standalone duplicate.
+        int firstOccurrence = rendered.indexOf("anthropic-java");
+        int lastOccurrence = rendered.lastIndexOf("anthropic-java");
+        assertThat(firstOccurrence).isEqualTo(lastOccurrence);
+    }
+
+    @Test
+    void whenIntakeAndPomDepsDoNotOverlap_thenBothRenderAsSeparateRows() {
+        Service s = baseService();
+        ExternalDependencyUsage intake = new ExternalDependencyUsage(
+                UUID.randomUUID(), "Stripe", "https://stripe.com", "Payment processor", "intake");
+        ExternalDependencyUsage pom = new ExternalDependencyUsage(
+                UUID.randomUUID(), "com.fasterxml.jackson.core:jackson-databind", null, null, "pom-xml");
+        ServicePageContext ctx = contextWithDeps(s, List.of(intake, pom));
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("Stripe")
+                .contains("com.fasterxml.jackson.core:jackson-databind");
+    }
+
+    // ------------------------------------------------------------------
     // Fixtures
     // ------------------------------------------------------------------
+
+    private static ServiceMetadata pomMeta(Service s, String key, String value) {
+        return new ServiceMetadata(UUID.randomUUID(), s.getId(), key, value, "pom-xml");
+    }
+
+    private ServicePageContext contextWith(Service s, List<ServiceMetadata> metadata) {
+        return new ServicePageContext(
+                s, List.of(), List.of(), List.of(), List.of(), List.of(), metadata,
+                List.of(), Map.of(), InventoryPageUrls.empty());
+    }
+
+    private ServicePageContext contextWithDeps(Service s, List<ExternalDependencyUsage> deps) {
+        return new ServicePageContext(
+                s, List.of(), List.of(), List.of(), List.of(), deps, List.of(),
+                List.of(), Map.of(), InventoryPageUrls.empty());
+    }
+
 
     private ServicePageContext fullContext() {
         Service s = new Service();
@@ -290,7 +450,7 @@ class ServicePageRendererTest {
         DatabaseUsage db = new DatabaseUsage(UUID.randomUUID(), "billing-db", "postgres", true, "Primary store");
 
         ExternalDependencyUsage ext = new ExternalDependencyUsage(
-                UUID.randomUUID(), "Stripe", "https://stripe.com", "Payment processor");
+                UUID.randomUUID(), "Stripe", "https://stripe.com", "Payment processor", "intake");
 
         ChangeEntry change = new ChangeEntry(
                 OffsetDateTime.parse("2026-04-26T10:15:00Z"),
@@ -303,6 +463,7 @@ class ServicePageRendererTest {
                 List.of(downstream),
                 List.of(db),
                 List.of(ext),
+                List.of(),
                 List.of(change),
                 Map.of(),
                 InventoryPageUrls.empty());
@@ -317,7 +478,7 @@ class ServicePageRendererTest {
 
     private ServicePageContext emptyContextFor(Service s) {
         return new ServicePageContext(
-                s, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(),
+                s, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(),
                 InventoryPageUrls.empty());
     }
 

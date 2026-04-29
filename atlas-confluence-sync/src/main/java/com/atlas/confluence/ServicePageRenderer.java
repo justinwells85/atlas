@@ -6,12 +6,18 @@ import com.atlas.services.DatabaseUsage;
 import com.atlas.services.ExternalDependencyUsage;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceDependencyEdge;
+import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceStatus;
 import org.springframework.stereotype.Component;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -52,19 +58,74 @@ public class ServicePageRenderer {
     private void renderTechnicalDetails(StringBuilder sb, ServicePageContext ctx) {
         Service s = ctx.service();
         sb.append("<h2>Technical Details</h2>\n");
-        if (!hasText(s.getLanguage()) && !hasText(s.getFramework())
-                && !hasText(s.getRepoUrl()) && !hasText(s.getDeployment())) {
+
+        // M4.5: prefer service_metadata observations over the legacy entity
+        // columns. Among observations for the same key, pom-xml wins over
+        // other sources (today only pom-xml writes here; intake-source
+        // observations land via M5).
+        Map<String, ServiceMetadata> meta = resolveMetadataByKey(ctx.serviceMetadata());
+        ServiceMetadata languageObs = meta.get("language");
+        ServiceMetadata frameworkObs = meta.get("framework");
+        ServiceMetadata languageVersionObs = meta.get("language_version");
+        ServiceMetadata frameworkVersionObs = meta.get("framework_version");
+        ServiceMetadata buildToolObs = meta.get("build_tool");
+
+        String language = languageObs != null ? languageObs.value() : s.getLanguage();
+        String framework = frameworkObs != null ? frameworkObs.value() : s.getFramework();
+        String languageVersion = languageVersionObs != null ? languageVersionObs.value() : null;
+        String frameworkVersion = frameworkVersionObs != null ? frameworkVersionObs.value() : null;
+        String buildTool = buildToolObs != null ? buildToolObs.value() : null;
+
+        if (!hasText(language) && !hasText(framework)
+                && !hasText(s.getRepoUrl()) && !hasText(s.getDeployment())
+                && !hasText(languageVersion) && !hasText(frameworkVersion)
+                && !hasText(buildTool)) {
             appendThinNote(sb, "No technical details documented yet.");
             return;
         }
-        appendField(sb, "Language", s.getLanguage());
-        appendField(sb, "Framework", s.getFramework());
+        appendFieldWithSource(sb, "Language", language, sourceOf(languageObs));
+        appendFieldWithSource(sb, "Language Version", languageVersion, sourceOf(languageVersionObs));
+        appendFieldWithSource(sb, "Framework", framework, sourceOf(frameworkObs));
+        appendFieldWithSource(sb, "Framework Version", frameworkVersion, sourceOf(frameworkVersionObs));
+        appendFieldWithSource(sb, "Build Tool", buildTool, sourceOf(buildToolObs));
         if (hasText(s.getRepoUrl())) {
             sb.append("<p><strong>Repository:</strong> ")
                     .append(renderLink(s.getRepoUrl(), s.getRepoUrl()))
                     .append("</p>\n");
         }
         appendField(sb, "Deployment", s.getDeployment());
+    }
+
+    /**
+     * Pick one observation per key, preferring {@code pom-xml} over other
+     * sources when multiple exist for the same key. (Today only pom-xml
+     * writes service_metadata; intake-source observations are an M5 plan.)
+     */
+    private static Map<String, ServiceMetadata> resolveMetadataByKey(List<ServiceMetadata> all) {
+        Map<String, ServiceMetadata> out = new HashMap<>();
+        for (ServiceMetadata m : all) {
+            ServiceMetadata cur = out.get(m.key());
+            if (cur == null || ("pom-xml".equals(m.source()) && !"pom-xml".equals(cur.source()))) {
+                out.put(m.key(), m);
+            }
+        }
+        return out;
+    }
+
+    private static String sourceOf(ServiceMetadata m) {
+        return m == null ? null : m.source();
+    }
+
+    private void appendFieldWithSource(StringBuilder sb, String label, String value, String source) {
+        if (!hasText(value)) {
+            return;
+        }
+        sb.append("<p><strong>").append(label).append(":</strong> ")
+                .append(escape(value));
+        if ("pom-xml".equals(source)) {
+            sb.append(" <em>(from pom.xml)</em>");
+        }
+        sb.append("</p>\n");
     }
 
     private void renderApis(StringBuilder sb, ServicePageContext ctx) {
@@ -166,26 +227,114 @@ public class ServicePageRenderer {
         if (ctx.externalDependencies().isEmpty()) {
             appendThinNote(sb, "No external dependencies documented yet.");
         } else {
-            String edInventoryUrl = ctx.inventoryPageUrls() == null ? null : ctx.inventoryPageUrls().externalDependencies();
-            sb.append("<ul>\n");
-            for (ExternalDependencyUsage ext : ctx.externalDependencies()) {
-                sb.append("<li><strong>");
-                if (hasText(ext.url())) {
-                    sb.append(renderLink(ext.url(), ext.name()));
-                } else {
-                    sb.append(escape(ext.name()));
-                }
-                sb.append("</strong>");
-                if (edInventoryUrl != null && !edInventoryUrl.isBlank()) {
-                    sb.append(" (").append(renderLink(edInventoryUrl, "in inventory")).append(")");
-                }
-                if (hasText(ext.description())) {
-                    sb.append(" — ").append(escape(ext.description()));
-                }
-                sb.append("</li>\n");
-            }
-            sb.append("</ul>\n");
+            renderExternalDependencies(sb, ctx);
         }
+    }
+
+    /**
+     * Render the External Dependencies bullet list, composing intake-source
+     * rows (carry human descriptions) with pom-source rows (carry
+     * {@code groupId:artifactId} coordinates). When a pom-source row matches
+     * an intake-source row by artifactId substring, the pom row collapses
+     * into a "matches pom: ..." annotation on the intake row. Unmatched
+     * pom-source rows render standalone with a "(from pom.xml)" suffix.
+     */
+    private void renderExternalDependencies(StringBuilder sb, ServicePageContext ctx) {
+        String edInventoryUrl = ctx.inventoryPageUrls() == null ? null
+                : ctx.inventoryPageUrls().externalDependencies();
+        List<ExternalDependencyUsage> all = ctx.externalDependencies();
+
+        List<ExternalDependencyUsage> intakeRows = new ArrayList<>();
+        List<ExternalDependencyUsage> pomRows = new ArrayList<>();
+        List<ExternalDependencyUsage> otherRows = new ArrayList<>();
+        for (ExternalDependencyUsage ext : all) {
+            if ("pom-xml".equals(ext.source())) {
+                pomRows.add(ext);
+            } else if ("intake".equals(ext.source()) || ext.source() == null) {
+                intakeRows.add(ext);
+            } else {
+                otherRows.add(ext);
+            }
+        }
+
+        Map<UUID, String> annotationsByIntakeId = new LinkedHashMap<>();
+        Set<UUID> matchedPomIds = new HashSet<>();
+        for (ExternalDependencyUsage pom : pomRows) {
+            ExternalDependencyUsage matched = matchIntakeRow(pom.name(), intakeRows);
+            if (matched != null) {
+                annotationsByIntakeId.put(matched.externalDependencyId(), pom.name());
+                matchedPomIds.add(pom.externalDependencyId());
+            }
+        }
+
+        sb.append("<ul>\n");
+        for (ExternalDependencyUsage ext : intakeRows) {
+            sb.append("<li><strong>");
+            if (hasText(ext.url())) {
+                sb.append(renderLink(ext.url(), ext.name()));
+            } else {
+                sb.append(escape(ext.name()));
+            }
+            sb.append("</strong>");
+            if (edInventoryUrl != null && !edInventoryUrl.isBlank()) {
+                sb.append(" (").append(renderLink(edInventoryUrl, "in inventory")).append(")");
+            }
+            if (hasText(ext.description())) {
+                sb.append(" — ").append(escape(ext.description()));
+            }
+            String pomCoords = annotationsByIntakeId.get(ext.externalDependencyId());
+            if (pomCoords != null) {
+                sb.append(" (✓ matches pom: ").append(escape(pomCoords)).append(")");
+            }
+            sb.append("</li>\n");
+        }
+        for (ExternalDependencyUsage pom : pomRows) {
+            if (matchedPomIds.contains(pom.externalDependencyId())) {
+                continue;
+            }
+            sb.append("<li><strong>").append(escape(pom.name())).append("</strong>");
+            sb.append(" <em>(from pom.xml)</em>");
+            sb.append("</li>\n");
+        }
+        for (ExternalDependencyUsage other : otherRows) {
+            sb.append("<li><strong>");
+            if (hasText(other.url())) {
+                sb.append(renderLink(other.url(), other.name()));
+            } else {
+                sb.append(escape(other.name()));
+            }
+            sb.append("</strong>");
+            if (hasText(other.description())) {
+                sb.append(" — ").append(escape(other.description()));
+            }
+            sb.append("</li>\n");
+        }
+        sb.append("</ul>\n");
+    }
+
+    /**
+     * Match a {@code groupId:artifactId} pom-source name against intake-source
+     * rows: split the artifactId into hyphen-separated tokens, keep tokens of
+     * length ≥ 4, and match if any token is a case-insensitive substring of
+     * any intake row's name. Conservative — short tokens like "api" or "lib"
+     * don't trigger spurious merges.
+     */
+    private static ExternalDependencyUsage matchIntakeRow(String pomName,
+                                                          List<ExternalDependencyUsage> intakeRows) {
+        if (pomName == null) return null;
+        int colon = pomName.indexOf(':');
+        if (colon < 0) return null;
+        String artifactId = pomName.substring(colon + 1).toLowerCase();
+        String[] tokens = artifactId.split("-");
+        for (String token : tokens) {
+            if (token.length() < 4) continue;
+            for (ExternalDependencyUsage intake : intakeRows) {
+                if (intake.name() != null && intake.name().toLowerCase().contains(token)) {
+                    return intake;
+                }
+            }
+        }
+        return null;
     }
 
     private void renderData(StringBuilder sb, ServicePageContext ctx) {

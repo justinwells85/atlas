@@ -584,6 +584,75 @@ class CodeSyncCoordinatorTest {
                 .extracting(ServiceMetadata::key).contains("language", "build_tool");
     }
 
+    // ---- M4.5: stale-intake-row cleanup ---------------------------------
+
+    @Test
+    void whenIntakeApiHasNoOpenApiCounterpart_thenTombstoneIsAppended() {
+        Service s = saveService("stale-svc", null);
+        relationships.insertApi(s.getId(), "/api/smoke/anthropic", "GET", null,
+                "Legacy hand-described endpoint", "intake");
+        relationships.insertApi(s.getId(), "/api/smoke/llm", "GET", null,
+                "Renamed in code", "openapi");
+
+        CodeSyncResult result = coordinator.tombstoneStaleIntakeApis(s.getId());
+
+        assertThat(result.deleted()).isEqualTo(1);
+        // Live view: the stale intake row is gone.
+        assertThat(relationships.findStaleIntakeApis(s.getId())).isEmpty();
+        assertThat(relationships.findApisFor(s.getId()))
+                .extracting(ApiSummary::path).containsExactly("/api/smoke/llm");
+        // Underlying rows: 1 intake live + 1 intake tombstone + 1 openapi live = 3.
+        Long total = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM apis WHERE service_id = ?",
+                Long.class, s.getId());
+        assertThat(total).isEqualTo(3L);
+        assertAuditCount(s.getId(), 1);
+        assertLastAuditChangedBy(s.getId(), "code-sync-stale-intake-cleanup");
+    }
+
+    @Test
+    void whenIntakeApiMatchesOpenApiObservation_thenIntakeApiIsLeftAlone() {
+        Service s = saveService("aligned-svc", null);
+        relationships.insertApi(s.getId(), "/v1/orders", "POST", null,
+                "Hand-described, still in code", "intake");
+        relationships.insertApi(s.getId(), "/v1/orders", "POST", null,
+                "Spec view of the same endpoint", "openapi");
+
+        CodeSyncResult result = coordinator.tombstoneStaleIntakeApis(s.getId());
+
+        assertThat(result.deleted()).isZero();
+        assertAuditCount(s.getId(), 0);
+    }
+
+    @Test
+    void whenStaleCleanupRunsTwice_thenSecondRunIsIdempotent() {
+        Service s = saveService("repeat-cleanup", null);
+        relationships.insertApi(s.getId(), "/v1/legacy", "GET", null, "stale", "intake");
+        relationships.insertApi(s.getId(), "/v1/orders", "GET", null, "live", "openapi");
+
+        coordinator.tombstoneStaleIntakeApis(s.getId());
+        CodeSyncResult second = coordinator.tombstoneStaleIntakeApis(s.getId());
+
+        assertThat(second.deleted()).isZero();
+        // Only the first run wrote a tombstone — the second observed nothing live to clean.
+        Long tombstones = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM apis WHERE service_id = ? AND presence = 'absent'",
+                Long.class, s.getId());
+        assertThat(tombstones).isEqualTo(1L);
+        assertAuditCount(s.getId(), 1);
+    }
+
+    @Test
+    void whenServiceHasNoIntakeApis_thenStaleCleanupIsNoop() {
+        Service s = saveService("no-intake", null);
+        relationships.insertApi(s.getId(), "/v1/orders", "GET", null, "live", "openapi");
+
+        CodeSyncResult result = coordinator.tombstoneStaleIntakeApis(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+        assertAuditCount(s.getId(), 0);
+    }
+
     private void stubGithubFile(String path, String content) {
         String b64 = java.util.Base64.getEncoder().encodeToString(
                 content.getBytes(java.nio.charset.StandardCharsets.UTF_8));

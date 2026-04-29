@@ -43,6 +43,7 @@ public class CodeSyncCoordinator {
     private static final String TESTS_CHANGED_BY = "code-sync-tests";
     private static final String POM_SOURCE = "pom-xml";
     private static final String POM_CHANGED_BY = "code-sync-pom";
+    private static final String STALE_INTAKE_CHANGED_BY = "code-sync-stale-intake-cleanup";
 
     private final ServiceRepository services;
     private final ServiceRelationshipsRepository relationships;
@@ -381,6 +382,42 @@ public class CodeSyncCoordinator {
         }
 
         return new CodeSyncResult(created, updated, deleted, skipped);
+    }
+
+    /**
+     * Tombstone intake-source api observations whose {@code (method, path)}
+     * has no live openapi-source counterpart on the same service (M4.5
+     * cleanup mechanism). Opt-in per service: callers invoke this explicitly
+     * via {@code POST /api/code-sync/tombstone-stale-intake-apis/{serviceId}}
+     * after running an OpenAPI refresh that confirms the current set of
+     * endpoints. Not auto-fired during {@link #refreshOpenApi} — the M1
+     * intake-skip rule remains the default for cautious teams.
+     *
+     * <p>The tombstone preserves {@code source='intake'} so provenance stays
+     * honest: this is recording that an intake observation is no longer
+     * present in any code-sync evidence, not converting it to a different
+     * source. Audit row written with
+     * {@code changed_by='code-sync-stale-intake-cleanup'}.
+     *
+     * @return counts: {@code deleted} = number of stale intake rows tombstoned;
+     *         the other fields are zero.
+     */
+    @Transactional
+    public CodeSyncResult tombstoneStaleIntakeApis(UUID serviceId) {
+        services.findById(serviceId)
+                .orElseThrow(() -> new IllegalArgumentException("No such service: " + serviceId));
+
+        List<ApiSummary> stale = relationships.findStaleIntakeApis(serviceId);
+        if (stale.isEmpty()) {
+            return CodeSyncResult.empty();
+        }
+        for (ApiSummary api : stale) {
+            relationships.writeApiTombstone(serviceId, api.method(), api.path(),
+                    "intake", api.confluencePageId());
+        }
+        relationships.insertServiceChange(serviceId, STALE_INTAKE_CHANGED_BY, "updated",
+                "Stale-intake cleanup: tombstoned=" + stale.size());
+        return new CodeSyncResult(0, 0, stale.size(), 0);
     }
 
     private static String key(String method, String path) {

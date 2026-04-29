@@ -119,6 +119,39 @@ public class ServiceRelationshipsRepository {
                         rs.getString("service_name")));
     }
 
+    /**
+     * Live view: intake-source api observations on the given service whose
+     * {@code (method, path)} key has no live openapi-source counterpart. Used
+     * by the M4.5 stale-intake cleanup path to identify intake-recorded
+     * endpoints that the code no longer exposes (e.g., pre-rename rows that
+     * the human interview never updated). Tombstoned intake observations are
+     * excluded — only currently-live intake rows that nothing in code-sync
+     * confirms.
+     */
+    public List<ApiSummary> findStaleIntakeApis(UUID serviceId) {
+        return jdbc.query(
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, path, method, auth_method, description, source, " +
+                        "         presence, confluence_page_id, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, method, path, source " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM apis " +
+                        ") " +
+                        "SELECT i.id, i.path, i.method, i.auth_method, i.description, i.source, i.confluence_page_id " +
+                        "FROM latest i " +
+                        "WHERE i.rn = 1 AND i.presence = 'present' " +
+                        "  AND i.source = 'intake' AND i.service_id = ? " +
+                        "  AND NOT EXISTS (" +
+                        "    SELECT 1 FROM latest o " +
+                        "    WHERE o.rn = 1 AND o.presence = 'present' AND o.source = 'openapi' " +
+                        "      AND o.service_id = i.service_id " +
+                        "      AND o.method = i.method AND o.path = i.path" +
+                        "  ) " +
+                        "ORDER BY i.path, i.method",
+                (rs, i) -> mapApi(rs),
+                serviceId);
+    }
+
     /** Null an api row's confluence_page_id. Used by the cleanup pass after the page is gone in Confluence. */
     public void clearApiConfluencePageId(UUID apiId) {
         jdbc.update("UPDATE apis SET confluence_page_id = NULL WHERE id = ?", apiId);
@@ -572,18 +605,33 @@ public class ServiceRelationshipsRepository {
                 serviceId, limit);
     }
 
+    /**
+     * Live view of external-dep observations for a service: latest per
+     * {@code (service_id, external_dependency_id, source)} where
+     * {@code presence='present'}. Multiple sources for the same dep return
+     * multiple rows so renderers can compose intake-source descriptions with
+     * pom-source coordinates. Tombstones and superseded observations are
+     * excluded.
+     */
     public List<ExternalDependencyUsage> findExternalDependenciesFor(UUID serviceId) {
         return jdbc.query(
-                "SELECT ed.id, ed.name, ed.url, sed.description " +
-                        "FROM service_external_deps sed " +
-                        "JOIN external_dependencies ed ON sed.external_dependency_id = ed.id " +
-                        "WHERE sed.service_id = ? " +
-                        "ORDER BY ed.name",
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, external_dependency_id, description, source, presence, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, external_dependency_id, source " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM service_external_deps " +
+                        ") " +
+                        "SELECT ed.id, ed.name, ed.url, l.description, l.source " +
+                        "FROM latest l " +
+                        "JOIN external_dependencies ed ON l.external_dependency_id = ed.id " +
+                        "WHERE l.rn = 1 AND l.presence = 'present' AND l.service_id = ? " +
+                        "ORDER BY ed.name, l.source",
                 (rs, i) -> new ExternalDependencyUsage(
                         (UUID) rs.getObject("id"),
                         rs.getString("name"),
                         rs.getString("url"),
-                        rs.getString("description")),
+                        rs.getString("description"),
+                        rs.getString("source")),
                 serviceId);
     }
 

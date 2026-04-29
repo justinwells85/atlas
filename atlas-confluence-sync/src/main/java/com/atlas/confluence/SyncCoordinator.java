@@ -7,6 +7,7 @@ import com.atlas.services.DatabaseUsage;
 import com.atlas.services.ExternalDependencyUsage;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceDependencyEdge;
+import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
 import com.atlas.services.SoftDeletedApiPage;
@@ -327,8 +328,9 @@ public class SyncCoordinator {
         List<ServiceDependencyEdge> downstream = relationships.findDownstreamDependenciesOf(id);
         List<DatabaseUsage> dbs = relationships.findDatabasesFor(id);
         List<ExternalDependencyUsage> exts = relationships.findExternalDependenciesFor(id);
+        List<ServiceMetadata> metadata = relationships.findServiceMetadataFor(id);
         List<ChangeEntry> changes = relationships.findRecentChangesFor(id, RECENT_CHANGES_LIMIT);
-        return new ServicePageContext(service, apiPresentations, upstream, downstream, dbs, exts, changes,
+        return new ServicePageContext(service, apiPresentations, upstream, downstream, dbs, exts, metadata, changes,
                 servicePageUrls, inventoryUrls);
     }
 

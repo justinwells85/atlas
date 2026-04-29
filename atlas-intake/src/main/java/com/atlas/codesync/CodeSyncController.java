@@ -38,4 +38,11 @@ public class CodeSyncController {
     public CodeSyncResult refreshPom(@PathVariable UUID serviceId) {
         return coordinator.refreshPom(serviceId);
     }
+
+    @PostMapping("/tombstone-stale-intake-apis/{serviceId}")
+    @Operation(summary = "Tombstone intake-source apis rows whose endpoints have no openapi counterpart",
+            description = "Opt-in cleanup: appends presence='absent' tombstones (preserving source='intake') for intake-source api observations on this service whose (method, path) does not match any current openapi-source live observation. Audit row writes changed_by='code-sync-stale-intake-cleanup'. Not auto-fired during /refresh — call explicitly when truth-fix is wanted.")
+    public CodeSyncResult tombstoneStaleIntakeApis(@PathVariable UUID serviceId) {
+        return coordinator.tombstoneStaleIntakeApis(serviceId);
+    }
 }

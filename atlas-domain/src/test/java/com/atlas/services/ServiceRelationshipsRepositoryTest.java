@@ -10,6 +10,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -95,6 +96,92 @@ class ServiceRelationshipsRepositoryTest {
                         org.assertj.core.api.Assertions.tuple("aaa-svc", "bbb-svc"),
                         org.assertj.core.api.Assertions.tuple("aaa-svc", "ccc-svc"),
                         org.assertj.core.api.Assertions.tuple("ccc-svc", "bbb-svc"));
+    }
+
+    // ---- M4.5: external-deps live-view + stale-intake-apis -----------------
+
+    @Test
+    void findExternalDependenciesFor_excludesTombstonedObservationsAndExposesSource() {
+        Service svc = save("composed-svc", "team");
+        UUID intakeDepId = relationships.insertExternalDependency("Stripe", "https://stripe.com");
+        relationships.insertServiceExternalDepObservation(
+                svc.getId(), intakeDepId, "Payment processor", "intake");
+
+        UUID pomDepId = relationships.insertExternalDependency("com.fasterxml.jackson.core:jackson-databind", null);
+        relationships.insertServiceExternalDepObservation(
+                svc.getId(), pomDepId, null, "pom-xml");
+
+        // Tombstoned pom-source observation should not appear.
+        UUID disappearedDepId = relationships.insertExternalDependency("org.gone:gone-artifact", null);
+        relationships.insertServiceExternalDepObservation(
+                svc.getId(), disappearedDepId, null, "pom-xml");
+        relationships.writeServiceExternalDepTombstone(svc.getId(), disappearedDepId, "pom-xml");
+
+        List<ExternalDependencyUsage> deps = relationships.findExternalDependenciesFor(svc.getId());
+
+        assertThat(deps).extracting(ExternalDependencyUsage::name, ExternalDependencyUsage::source)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.api.Assertions.tuple("Stripe", "intake"),
+                        org.assertj.core.api.Assertions.tuple("com.fasterxml.jackson.core:jackson-databind", "pom-xml"));
+        assertThat(deps).noneMatch(d -> d.name().equals("org.gone:gone-artifact"));
+    }
+
+    @Test
+    void findExternalDependenciesFor_returnsLatestObservationPerSourceAfterMultipleRefreshes() {
+        Service svc = save("repeated-svc", "team");
+        UUID depId = relationships.insertExternalDependency("com.foo:bar", null);
+        relationships.insertServiceExternalDepObservation(svc.getId(), depId, null, "pom-xml");
+        relationships.insertServiceExternalDepObservation(svc.getId(), depId, null, "pom-xml");
+        relationships.insertServiceExternalDepObservation(svc.getId(), depId, null, "pom-xml");
+
+        List<ExternalDependencyUsage> deps = relationships.findExternalDependenciesFor(svc.getId());
+
+        assertThat(deps).hasSize(1);
+        assertThat(deps.get(0).source()).isEqualTo("pom-xml");
+    }
+
+    @Test
+    void findStaleIntakeApis_returnsIntakeApisWithNoOpenapiCounterpart() {
+        Service svc = save("stale-svc", "team");
+        // Intake declared two endpoints. Code shipped /v1/orders openapi-source
+        // but renamed /v1/legacy → /v1/legacy-renamed (so /v1/legacy is stale).
+        relationships.insertApi(svc.getId(), "/v1/orders", "GET", null, "Order list", "intake");
+        relationships.insertApi(svc.getId(), "/v1/legacy", "GET", null, "Legacy endpoint", "intake");
+        relationships.insertApi(svc.getId(), "/v1/orders", "GET", null, "Orders (from spec)", "openapi");
+        relationships.insertApi(svc.getId(), "/v1/legacy-renamed", "GET", null, "Renamed endpoint", "openapi");
+
+        List<ApiSummary> stale = relationships.findStaleIntakeApis(svc.getId());
+
+        assertThat(stale).hasSize(1);
+        assertThat(stale.get(0).method()).isEqualTo("GET");
+        assertThat(stale.get(0).path()).isEqualTo("/v1/legacy");
+        assertThat(stale.get(0).source()).isEqualTo("intake");
+    }
+
+    @Test
+    void findStaleIntakeApis_emptyWhenNoIntakeApisExist() {
+        Service svc = save("openapi-only", "team");
+        relationships.insertApi(svc.getId(), "/v1/health", "GET", null, "ping", "openapi");
+
+        assertThat(relationships.findStaleIntakeApis(svc.getId())).isEmpty();
+    }
+
+    @Test
+    void findStaleIntakeApis_excludesAlreadyTombstonedIntakeRows() {
+        Service svc = save("already-cleaned", "team");
+        relationships.insertApi(svc.getId(), "/v1/old", "GET", null, "removed", "intake");
+        relationships.writeApiTombstone(svc.getId(), "GET", "/v1/old", "intake", null);
+
+        assertThat(relationships.findStaleIntakeApis(svc.getId())).isEmpty();
+    }
+
+    @Test
+    void findStaleIntakeApis_doesNotIncludeIntakeRowsWithMatchingOpenapiObservation() {
+        Service svc = save("aligned-svc", "team");
+        relationships.insertApi(svc.getId(), "/v1/orders", "POST", null, "Create order", "intake");
+        relationships.insertApi(svc.getId(), "/v1/orders", "POST", null, "Create order (spec)", "openapi");
+
+        assertThat(relationships.findStaleIntakeApis(svc.getId())).isEmpty();
     }
 
     private Service save(String name, String ownerTeam) {

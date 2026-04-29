@@ -135,17 +135,44 @@ Decision point at end of M3: code-sync responsibilities are now substantial — 
 
 **Reflection at M4 boundary.**
 
-### M5 — Phase reflection + interview shrinkage
+### M4.5 — Renderer integration + stale intake-row cleanup (lifted from M5)
 
-**Goal**: measure the change, slim the interview, decide what's next.
+**Goal**: pom-derived `service_metadata` and pom-source `service_external_deps` observations become visible on Confluence pages, and the dogfood's stale `/api/smoke/anthropic` intake row is tombstoned so M2.5's cleanup pass removes its orphan endpoint page.
 
-1. Count intake-prompted fields at start of phase (today: ~17) vs end of phase. Document delta.
-2. Audit existing intake stages in `InterviewService.java`. For each, decide: kept, removed (now auto-derived), or made-optional (auto-derived but still askable as override).
-3. Implement the interview slimming: remove or make-optional the now-auto-derived stages.
-4. **Carry-over from M1**: once intake stops asking about APIs, the existing `source='intake'` rows that overlap a service's OpenAPI spec become migration debt. The dogfood already has a concrete instance — `/api/smoke/anthropic` (intake row) was renamed to `/api/smoke/llm` in code per ADR-013, but intake never updated the row, so code-sync's intake-collision skip can't help. Decide a one-time migration: (a) auto-delete `source='intake'` rows whose `(method, path)` no longer matches any current code-sync result for the same service, with audit `changed_by='m5-intake-shrinkage'`; (b) flag them for human review without auto-deleting; (c) leave them alone and call it intentional "human notes that survive code refactors". Default: (a) — the whole point of the phase is to make the docs not lie.
-5. Re-run the dogfood: register a fresh service via the slim interview + a `repo_url` and `openapi_spec_url`, observe code-sync filling in the rest, observe richer Confluence pages than before. Confirm `/api/smoke/anthropic` is gone from atlas-intake's apis rows.
-6. Tests: interview state-machine tests updated; code-sync fills the gap on first sync after intake; the M5 stale-intake-cleanup migration is exercised against a fixture.
-7. **Phase-level reflection** (per CLAUDE.md §6): are we still on track for the project's stated goals? What's surfaced? Where next — AI-narrated walkthroughs (a layer 3 we deliberately deferred), production-readiness (open DDs), or something else?
+Rationale for splitting from M5: the interim phase reflection identified renderer integration as the highest-impact unrealized work from M1–M4 — data is captured but not user-visible. Bundling this into M5 alongside interview-shape refactoring delays the visible win. M4.5 ships the rendering improvements and dogfood truth-fix; M5 handles interview shrinkage on top.
+
+1. **Service-page renderer reads `service_metadata`.** New repository method `findServiceMetadataLatest(serviceId)` returns latest-per-`(service_id, key)` rows where `presence='present'` (window function over `service_metadata`, mirroring the apis live-view query). Renderer composes `language`, `language_version`, `framework`, `framework_version`, `build_tool` from these rows. Source annotation rendered inline as a small "(from pom.xml)" suffix — plain text, not a styled badge, prototype-scale.
+2. **Fallback to entity columns.** When no `service_metadata` observation exists for `language` or `framework`, fall back to the existing `services.language` / `services.framework` columns (intake-source via the entity). Once M5 migrates intake to write `service_metadata`, this fallback becomes dead code; documented inline so M5 cleans it up.
+3. **External-Dependencies section composes intake + pom sources.** Today the renderer reads `external_dependencies` joined to `service_external_deps`. Add a parallel read of pom-source observations (live-view of `service_external_deps` filtered to `source='pom-xml'`, latest-per-`(service_id, dep_id-or-coordinates)`). Compose by canonical key:
+   - **Intake-only**: render `name` + `description` (existing behaviour).
+   - **Pom-only**: render `groupId:artifactId:version` with a "(from pom.xml)" suffix.
+   - **Both**: render the intake row's `name` + `description`, append "(✓ matches pom: groupId:artifactId:version)".
+   - Matching heuristic: case-insensitive `name` substring match against `artifactId`, plus exact-match on canonical coordinates if the intake row carries them. Conservative — collisions render as separate rows by default; explicit match required.
+4. **Stale-intake-row cleanup mechanism.** New `CodeSyncCoordinator.tombstoneStaleIntakeApis(serviceId)` — for the given service, find intake-source `apis` observations whose `(method, path)` does not appear in any current openapi-source live observation for that service, and write `presence='absent'` tombstones with `source='intake'` (preserving provenance — these are intake observations being marked absent, not converted to a new source). Audit row: `change_type='tombstoned'`, `changed_by='code-sync-stale-intake-cleanup'`. New REST endpoint `POST /api/code-sync/tombstone-stale-intake-apis/{serviceId}` for explicit invocation. **Not** auto-fired during `refreshOpenApi` — keeping intake-skip the default; cleanup is opt-in per service.
+5. **Tests** (TDD; failing first):
+   - Renderer: `whenServiceMetadataHasPomSourceLanguage_thenRenderedPageShowsPomLanguageWithSuffix`
+   - Renderer fallback: `whenNoServiceMetadataExists_thenRenderedPageShowsEntityColumnLanguage`
+   - External-deps composition: intake-only, pom-only, both-matching, both-not-matching cases
+   - Stale-cleanup coordinator: `whenIntakeApiHasNoOpenapiCounterpart_thenTombstoneIsWritten`; `whenIntakeApiMatchesOpenapiObservation_thenIntakeApiIsLeftAlone`; `whenStaleCleanupRunsTwice_thenSecondRunIsIdempotent` (no duplicate tombstones)
+   - Sync orchestration: tombstoned intake apis disappear from live-view → M2.5 cleanup pass removes their orphan Confluence pages
+6. **Live verification**:
+   - Re-run code-sync against atlas-intake (`refresh-pom`, then `tombstone-stale-intake-apis`), then sync to Confluence. Confirm: (a) atlas-intake's service page shows `language=Java (from pom.xml)`, `framework=Spring Boot (from pom.xml)`; (b) external-deps section shows the 9 pom-source rows alongside the 2 intake-source rows ("Anthropic API", "Confluence Cloud") with appropriate composition; (c) `/api/smoke/anthropic` is gone from the APIs section of atlas-intake's service page; (d) the corresponding endpoint page is removed by the M2.5 cleanup pass.
+
+**Reflection at M4.5 boundary.**
+
+### M5 — Interview shrinkage + phase close
+
+**Goal**: shrink the interview to match the new code-driven reality; close the phase with the end-of-phase reflection.
+
+Rationale (post-M4.5 split): with renderer integration and stale-row cleanup landed in M4.5, M5 narrows to interview-shape work and the phase-level wrap-up. The "is the dogfood truthful?" question is closed by M4.5; M5 closes the "is the human asked less?" question.
+
+1. Count intake-prompted fields at start of phase (today: ~17) vs end of phase. Document delta in this plan's status log.
+2. Audit existing intake stages in `InterviewService.java`. For each, decide: kept, removed (now auto-derived), or made-optional (auto-derived but still askable as override). The likely candidates for removal/optional: APIs, language, framework, external deps, tests. Likely kept: ownership, SLA, support contact, business rationale, repo_url, openapi_spec_url, deployment notes.
+3. Implement the interview slimming: remove or make-optional the now-auto-derived stages from the state machine. Update intake REST contract tests.
+4. **Migrate intake to write `service_metadata`** (in addition to or instead of `services.language` / `services.framework`). Once intake writes both sources, the renderer's M4.5 entity-column fallback becomes dead code — remove. Decision call: keep `services.language` / `services.framework` columns (legacy readers may exist) or drop them via a Flyway migration. Default: keep the columns, stop writing them, schedule a deprecation note in `docs/decisions.md`.
+5. Re-run the dogfood: register a fresh service via the slim interview + a `repo_url` and `openapi_spec_url`, observe code-sync filling in the rest, observe richer Confluence pages than before.
+6. Tests: interview state-machine tests updated; code-sync fills the gap on first sync after intake; service-page renderer's pom-source path is exercised by intake-written `service_metadata`.
+7. **Phase-level reflection** (per CLAUDE.md §6): the *interim* reflection (appended after M4) framed the in-flight question of M5 ordering. The end-of-phase reflection writes the final answer to "are we still on track for project goals" and surfaces the next-phase decision: Phase 6 (demo + handoff per the roadmap), AI-narrated walkthroughs (deferred layer 3 from the original strategic conversation), or production-readiness DDs (DD-001 auth, DD-003 CI, AWS provisioning).
 
 **End-of-phase reflection.**
 
@@ -165,6 +192,8 @@ Decision point at end of M3: code-sync responsibilities are now substantial — 
 - 2026-04-29 — M3 closed (test extraction; code-sync stays folded into atlas-intake per the M3.8 decision).
 - 2026-04-29 — M3.5 closed (append-only ingestion retrofit: code-sync only inserts, disappearance recorded as tombstones, live-view query for renderer/MCP).
 - 2026-04-29 — M4 closed (pom.xml ingestion → service_metadata + service_external_deps observations).
+- 2026-04-29 — Interim phase reflection appended (before M5); recommended splitting M5 into M4.5 (renderer integration + stale-intake cleanup) and M5 (interview shrinkage + phase close).
+- 2026-04-29 — M4.5 closed (renderer reads service_metadata with pom-source suffix; external-deps section composes intake + pom rows by artifactId-token match; stale-intake-row cleanup mechanism via opt-in REST endpoint).
 
 ## Reflections
 
@@ -288,3 +317,70 @@ Branch `main` at commit pending — this commit lands M3.5 (append-only ingestio
 **Resumable summary** *(propagated to `docs/handoff/current-state.md`)*
 
 Branch `main` at commit pending — this commit lands M4 of the code-driven-documentation plan. 236 tests pass across four modules (atlas-domain 33, atlas-intake 91, atlas-mcp 24, atlas-confluence-sync 88), up from 219 after M3.5. V19 adds the `service_metadata` table and observation columns (`observed_at`, `presence`, `source`) on `service_external_deps`. Vendor-split V20 drops the `service_external_deps` unique constraint. New `PomParser` (Maven MavenXpp3Reader, no property resolution / parent traversal), `RepoFileFetcher.fetchFile` extension, `CodeSyncCoordinator.refreshPom` (transactional, append-only). New `POST /api/code-sync/refresh-pom/{serviceId}` endpoint. `org-group-prefix` configurable to skip internal deps (default `com.atlas`). Live-verified against atlas-intake's pom: 11 observations created (2 metadata, 9 external deps), no overwrite of existing intake-source rows. Open carry-overs from prior milestones, plus: parent-pom traversal would surface `framework_version` for multi-module repos; renderer integration to surface `service_metadata` (and dedupe with `services.language`/`services.framework`) is the next natural polish; per-tick observation timing for "what was true at exactly time T" still deferred. Next milestone: M5 — phase-level reflection + interview shrinkage.
+
+### Interim phase reflection — 2026-04-29 (before M5)
+
+Conventionally the phase-level reflection lands at end of M5. The user requested this earlier so the reflection's findings could inform whether M5 ships as planned, ships in a different shape, or yields to a different priority. Treat this as an interim phase check; the end-of-phase reflection at M5 close will reference whatever direction this section motivates.
+
+**Are we on track for the project's stated goals?**
+
+Yes — the CLAUDE.md "WHY" (auto-generate and keep current a Confluence wiki of service inventory, reducing manual effort and staleness) is materially delivered for the *capture* side. APIs, tests, framework/language, and external deps are all auto-derivable from code; per-source provenance is uniform across data types; the append-only retrofit (M3.5) means observations accumulate without overwriting human input. The dogfood proves the pipeline end-to-end: 11 fresh pom-source observations on atlas-intake, 41 test scenarios extracted from `main`, OpenAPI-source `apis` rows for every controller endpoint.
+
+The plan's stated success criterion *"the interview has materially shrunk"* is unmet — interview still asks for the same ~17 fields. Code-sync writes new data in parallel; humans aren't asked less. M5's whole point is to close that gap. So: capture-side goal is met; *reduce-manual-effort* goal is half-met.
+
+**Risks the work surfaced**
+
+- **Renderer integration lag.** The single largest unrealized value from this phase is that `service_metadata` rows and pom-source `service_external_deps` rows aren't yet surfaced on Confluence pages. The renderer still reads `services.language` / `services.framework` only. Data is in the DB; users don't see it yet. This converts what feels like four shipped milestones (M1–M4) into roughly three-and-a-half from a user's perspective.
+- **PomParser shallowness.** Atlas's own dogfood produced empty `framework_version` because atlas-intake's pom inherits from `com.atlas:atlas`, not `spring-boot-starter-parent` directly. Real production poms almost universally have parent chains. M4 captured the data the parser sees; in many real-world cases that's less than expected.
+- **Stale intake rows.** The `/api/smoke/anthropic` row in dogfood (renamed to `/api/smoke/llm` per ADR-013, but never updated by intake) is the concrete instance of the staleness problem this whole project exists to fix. It's still in the DB. M5 step 4 addresses it; until M5 ships, the dogfood docs are demonstrably wrong about a thing the system is *supposed* to keep right.
+- **Mid-flight schema rewrites.** M3.5 was a large retrofit driven by a clarification mid-phase. The retrofit worked cleanly (219 tests passed unchanged), and M4 was designed against the new model from day one — but the lesson is that "don't modify ingested data" is the kind of design intent that needs to surface during the planning conversation, not three milestones in. Worth re-checking M5's design with the same lens before committing.
+- **Public-repo-only test fetching.** Production teams have private repos; the M3 test pipeline can't reach them without auth. DD-014 candidate; not blocking dogfood.
+
+**Opportunities the work surfaced**
+
+- **Append-only model is more powerful than designed.** It naturally supports observation-history queries ("when did we first see this dep?", "when did this endpoint disappear?"). Future features like drift dashboards, stale-doc alerts, or "what changed between two syncs" become trivial. The window-function live-view query is the primitive.
+- **Code-sync architecture extends naturally.** Three writers landed (OpenAPI, tests, pom) without inventing new abstractions. A fourth (Dockerfile metadata, GitHub Actions config, README badges) fits the same shape: fetcher + parser + coordinator method + new `source` value.
+- **The shift from "ask humans" to "read code" is qualitatively different from the original Phase 1–2 model.** The interview was the only writer; now it's one writer alongside three. The architecture quietly absorbed that change. Future phases can lean harder on this: scheduled cron, CI integration, drift detection.
+
+**Invalidated assumptions**
+
+- *"Code-sync will split out as `atlas-code-sync`"* — decided at M3 to stay folded. The package boundary is clean; production team can lift it later. Plan-stated decision point honored; assumption replaced with a deliberate-stay choice.
+- *"Skip-on-collision is the long-term policy"* — M1 reflection already flagged this would flip at M5. By M5, intake stops asking about APIs, openapi becomes the sole source, and the skip becomes dead code. Confirmed.
+- *"`services.language` / `services.framework` are the canonical home for those facts"* — M4 created a parallel `service_metadata` table. The entity columns are now legacy. M5 is the natural place to migrate intake writes and deprecate.
+- *"M5 is one milestone"* — looking at it now, M5 bundles renderer integration + interview slimming + stale-row cleanup + phase reflection. Each of those is a distinct shippable unit. See "What's next" below.
+
+**What's next — three options**
+
+**(A) M5 as planned.** Single milestone, four sub-deliverables (renderer integration, interview slimming, stale-row cleanup, phase-reflection close). Coherent end-of-phase shape. Risk: bundles the highest-impact piece (renderer integration) with the largest piece (interview-stage refactor), so any friction in one delays the other.
+
+**(B) Split M5 into M4.5 + M5.** M4.5 = renderer integration + stale-row cleanup (small, user-visible: pom data appears on pages, dogfood stops being wrong). M5 = interview slimming + phase-reflection close. Smaller review boundaries, faster visible feedback, the highest-impact piece ships standalone. Cost: two commits where one would do; phase-reflection close drifts later by however long the interview-slimming work takes.
+
+**(C) Pivot to Phase 6 (demo + handoff) or to a new phase (AI-narrated walkthroughs / production-readiness DDs).** Phase 6 is roadmap-next; the layer-3 AI-narration work was deferred from the original strategic conversation. Cost: leaves the code-driven-docs phase in a half-done state — interview not shrunk, dogfood still showing stale rows, pom data not on pages. Probably wrong — finish the phase before pivoting.
+
+**Recommendation**
+
+Option **(B) — split M5**. The renderer integration is the highest-impact unrealized work from this phase and shouldn't sit behind interview-stage refactoring. Splitting also gives a cleaner boundary for the user to validate "is the dogfood now showing what code says?" before committing to interview-shape changes that touch every intake conversation.
+
+After Phase close (whether via A or B), the next decision is **Phase 6 (demo + handoff per the roadmap) vs. a new phase tackling AI-narrated walkthroughs or production-readiness DDs (DD-001 auth, DD-003 CI, AWS provisioning).** That's the right question for the *end-of-phase* reflection, not now. Logging it here so the next session inherits the framing.
+
+### M4.5 — Renderer integration + stale-intake-row cleanup
+
+**What's working**
+
+- **Append-only model paid off the third time too.** The renderer's read paths needed live-view filtering on `service_external_deps` (latest-per-`(service_id, ext_dep_id, source)` where `presence='present'`) — the same window-function shape that already works for `apis`, `service_test_scenarios`, and `service_metadata`. The new `findExternalDependenciesFor` query is structurally identical to the existing live-views; readers can pattern-match between them. Found and silently fixed a pre-existing bug — the old `findExternalDependenciesFor` ignored `presence` and would have surfaced tombstones once any disappeared.
+- **Red-first discipline held throughout.** Every behavior added in M4.5 had a failing test before its impl line existed: 6 new repository tests (live-view tombstone exclusion, multi-observation collapse, four stale-intake-apis cases), 8 new renderer tests (technical-details from metadata with fallback + override; external-deps composition with intake-only / pom-only / matching / non-matching cases), 4 new coordinator tests. 18 net new tests, all written before the corresponding code. The M2 discipline reset has now scaled across four milestones (M2 → M2.5 → M3 → M4.5 — M4 was the regression).
+- **Conservative matching heuristic is robust enough to ship.** The artifactId-token rule (split by `-`, length ≥ 4, case-insensitive substring of intake name) correctly merged `com.anthropic:anthropic-java` into the intake row "Anthropic API" without producing false positives against `Stripe` ↔ `com.fasterxml.jackson.core:jackson-databind`. Token length floor of 4 is the key safety: a more naïve "any substring" would match "api" against everything.
+- **Plain-text source suffix beats a styled badge.** The "(from pom.xml)" suffix is rendered with a thin `<em>` and no other styling. Reads cleanly against the existing thin-note prose; doesn't introduce new visual vocabulary.
+- **Opt-in stale cleanup respects the M1 contract.** The new `tombstoneStaleIntakeApis` runs only when explicitly invoked (REST endpoint or coordinator call). The auto-fired `refreshOpenApi` still defers entirely to intake-source rows on collision. Production teams that aren't ready for code to overrule humans can simply not call the new endpoint; teams that want truth-fix have the path.
+
+**What's not — and what to do about it**
+
+- **Test counts hit 254 but fixture sprawl is real.** `ServicePageRendererTest`'s context-construction helpers (`fullContext`, `minimalContext`, `emptyContextFor`, plus M4.5's `contextWith`, `contextWithDeps`) now span five different shapes. Adding a tenth field to `ServicePageContext` will mean another round of "update every fixture call site." Worth thinking about whether `ServicePageContext` should expose a builder before M5 adds intake-written `service_metadata` and likely another field. Capture as M5 polish, not blocking.
+- **Confluence "✓" character is in the rendered output.** It's a Unicode codepoint that Confluence storage format passes through cleanly, and it doesn't trigger the existing escape rules. Looks fine in dogfood verification expected; if it ever renders weirdly, swap for plain text "matches pom: ...".
+- **Live-view query for external-deps double-runs the window function once for the rendered list and again inside `findLiveExternalDepsForService` (used by code-sync's diff path).** Two CTEs over the same table for slightly different shapes. Acceptable at prototype scale; if performance ever shows up, consolidate into a single CTE shared by both methods.
+- **The `otherRows` branch in `renderExternalDependencies` is defensive against future sources** (e.g., openapi or tests-source external deps) that don't exist today. Could argue YAGNI; left in because the cost is one short loop and the future-extension cost would be wading back through this logic to add it later. A genuine over-engineering moment that I left in deliberately — re-evaluate if it stays unused after M5.
+- **Pre-existing `findExternalDependenciesFor` bug.** Before M4.5, the renderer would have surfaced tombstoned external-dep observations after M4 because the query didn't filter on `presence`. The dogfood didn't trip this because no external-dep tombstones existed yet. Worth tagging as a near-miss: M4 introduced `presence` columns but didn't re-audit every read path. Future schema-shape changes should explicitly enumerate readers and verify each one was updated.
+
+**Resumable summary** *(propagated to `docs/handoff/current-state.md`)*
+
+Branch `main` at commit pending — this commit lands M4.5 of the code-driven-documentation plan. 254 tests pass across four modules (atlas-domain 39, atlas-intake 95, atlas-mcp 24, atlas-confluence-sync 96), up from 236 after M4. **No new migrations** — M4.5 reuses the schema landed in M3.5/M4. `findExternalDependenciesFor` rewritten to a window-function live-view that returns one row per `(service_id, ext_dep_id, source)` and exposes `source` on `ExternalDependencyUsage`. New `findStaleIntakeApis` repository method (intake-source live observations with no openapi-source counterpart). `ServicePageContext` gained a `List<ServiceMetadata>` field; `ServicePageRenderer.renderTechnicalDetails` now reads from it (with `pom-xml` precedence and entity-column fallback) and renders a `(from pom.xml)` suffix; new `Language Version` / `Framework Version` / `Build Tool` lines surface when observations carry them. External-Dependencies section composes intake-source rows (with descriptions) and pom-source rows (with `groupId:artifactId` coordinates), collapsing pom rows that match an intake row by artifactId-token substring (case-insensitive, length ≥ 4) into a "✓ matches pom: ..." annotation on the intake row. New `CodeSyncCoordinator.tombstoneStaleIntakeApis(serviceId)` method writes `presence='absent'` tombstones (preserving `source='intake'`) for intake-source api observations whose `(method, path)` has no live openapi counterpart; audit row `changed_by='code-sync-stale-intake-cleanup'`. New REST endpoint `POST /api/code-sync/tombstone-stale-intake-apis/{serviceId}` — opt-in per service; not auto-fired during `refreshOpenApi`. Live-verify against the dogfood deferred to user discretion (one suggested run: refresh-pom → refresh → tombstone-stale-intake-apis on atlas-intake, then sync to Confluence; expected: language/framework with "(from pom.xml)" suffix, External Dependencies showing 2 intake + N pom rows with composition, `/api/smoke/anthropic` gone from APIs section). Next milestone: M5 — interview shrinkage + phase close. Open carry-overs unchanged from M4, plus: `ServicePageContext` builder candidate (fixture sprawl); `findExternalDependenciesFor` and `findLiveExternalDepsForService` could share a CTE; `otherRows` defensive branch in renderExternalDependencies should be re-evaluated for YAGNI removal after M5.
