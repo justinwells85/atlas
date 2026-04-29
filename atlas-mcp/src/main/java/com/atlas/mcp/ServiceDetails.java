@@ -33,6 +33,7 @@ public record ServiceDetails(
         OffsetDateTime lastSyncedToConfluence,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
+        OffsetDateTime deletedAt,
         List<ApiSummary> apis,
         List<ServiceDependencyEdge> upstreamDependencies,
         List<ServiceDependencyEdge> downstreamDependencies,

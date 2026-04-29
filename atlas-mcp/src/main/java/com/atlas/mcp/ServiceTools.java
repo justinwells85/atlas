@@ -146,6 +146,27 @@ public class ServiceTools {
         return toDetails(svc);
     }
 
+    @Tool(description = "Soft-delete a service by ID. Stamps the row's deleted_at column "
+            + "so the entity is hidden from JPA queries (per ADR-014). The Confluence sync agent's "
+            + "next run will delete the orphan page. Returns the freshly soft-deleted ServiceDetails "
+            + "with deletedAt populated. Returns an error if the service is not found or already "
+            + "soft-deleted.")
+    public ServiceDetails deleteService(
+            @ToolParam(description = "Service ID (UUID).") String serviceId) {
+        UUID id = parseUuid(serviceId);
+        Service svc = services.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("No service with id " + id));
+
+        services.delete(svc);  // @SQLDelete rewrites this into UPDATE deleted_at = CURRENT_TIMESTAMP
+        relationships.insertServiceChange(id, "mcp-delete_service", "deleted",
+                "Service '" + svc.getName() + "' soft-deleted via MCP.");
+
+        Service deleted = services.findByIdIncludingDeleted(id)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Service " + id + " disappeared between delete and reload"));
+        return toDetails(deleted);
+    }
+
     private ServiceDetails toDetails(Service svc) {
         UUID id = svc.getId();
         return new ServiceDetails(
@@ -166,6 +187,7 @@ public class ServiceTools {
                 svc.getLastSyncedToConfluence(),
                 svc.getCreatedAt(),
                 svc.getUpdatedAt(),
+                svc.getDeletedAt(),
                 relationships.findApisFor(id),
                 relationships.findUpstreamDependenciesOf(id),
                 relationships.findDownstreamDependenciesOf(id),

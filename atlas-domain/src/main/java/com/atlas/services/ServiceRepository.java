@@ -51,6 +51,15 @@ public interface ServiceRepository extends JpaRepository<Service, UUID> {
     Optional<Service> findByNameIncludingDeleted(@Param("name") String name);
 
     /**
+     * Look up a service by ID *including* soft-deleted rows. Used by
+     * {@code delete_service} to read back the freshly-stamped {@code deleted_at}
+     * for the response shape — the standard {@code findById} would return
+     * empty since {@code @SQLRestriction} hides soft-deleted rows.
+     */
+    @Query(value = "SELECT * FROM services WHERE id = :id", nativeQuery = true)
+    Optional<Service> findByIdIncludingDeleted(@Param("id") UUID id);
+
+    /**
      * Reactivate a soft-deleted service: clear {@code deleted_at} so the
      * row is visible again to JPA queries, and clear the Confluence-sync
      * state so the next sync produces a fresh page. Caller is expected to

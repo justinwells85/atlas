@@ -10,9 +10,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class IntakeController {
 
     private final InterviewService interviewService;
+    private final RemovalService removalService;
 
-    public IntakeController(InterviewService interviewService) {
+    public IntakeController(InterviewService interviewService, RemovalService removalService) {
         this.interviewService = interviewService;
+        this.removalService = removalService;
     }
 
     @PostMapping("/turn")
@@ -20,5 +22,12 @@ public class IntakeController {
         return interviewService.next(request.state(), request.userInput());
     }
 
+    @PostMapping("/remove")
+    public RemovalService.RemovalResult remove(@RequestBody RemoveTurnRequest request) {
+        return removalService.next(request.state(), request.userInput());
+    }
+
     public record IntakeTurnRequest(InterviewState state, String userInput) {}
+
+    public record RemoveTurnRequest(RemovalState state, String userInput) {}
 }
