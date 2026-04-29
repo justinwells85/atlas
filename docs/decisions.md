@@ -4,6 +4,50 @@ Architectural decisions captured in lightweight ADR (Architecture Decision Recor
 
 ---
 
+## ADR-015: Confluence-sync reads via `atlas-domain` repositories, not MCP
+
+**Status**: Accepted (2026-04-28)
+
+**Context**: The original architecture diagram in `docs/architecture.md` showed an MCP-in-the-middle pipeline: `Intake → DB → MCP Server → Sync Agent → Confluence`. The actual implementation has always read from `atlas-domain`'s JPA repositories directly — MCP is a parallel branch serving AI clients (Claude Desktop, Claude Code, partner agents), not a layer the sync path goes through. Question raised: should the sync agent be refactored to honour the original diagram and consume MCP tools instead of `atlas-domain`?
+
+A tally of `SyncCoordinator`'s actual reads on `atlas-domain` (as of this ADR):
+
+| Repository call | Purpose | Soft-delete-aware? |
+|---|---|---|
+| `serviceRepository.findAll()` | Live service list — drives the per-service render loop and well-known pages. | yes (filter implicit) |
+| `serviceRepository.findById(uuid)` | `syncOne` lookup. | yes |
+| `serviceRepository.findSoftDeletedWithConfluencePage()` | Orphan cleanup pass (ADR-014). | **no — bypasses filter** |
+| `serviceRepository.clearConfluencePageId(uuid)` | Native UPDATE that nulls the page ID after orphan cleanup. | **no — bypasses filter** |
+| `serviceRepository.save(svc)` | Persists `confluence_page_id` + `last_synced_to_confluence`. | yes |
+| `relationships.findApisFor` / `findApiConsumersFor` / `findUpstream…` / `findDownstream…` / `findDatabasesFor` / `findExternalDependenciesFor` / `findRecentChangesFor` | Per-service detail rendering (matches `get_service_details` shape but with `change_history` added). | yes |
+| `relationships.findAllDataStoresWithUsages()` / `findAllExternalDependenciesWithUsages()` | Inventory page rendering. | yes |
+| `relationships.findAllServiceDependencies()` | Architecture map (ADR-015 follow-up; milestone C). | yes |
+
+Replacing these with MCP tool calls would require **adding ≈4 new MCP tools** purely to satisfy sync's needs:
+
+1. `find_soft_deleted_services_with_confluence_page` — exposes a sync-internal bookkeeping concern.
+2. `clear_confluence_page_id` — write op for sync's bookkeeping.
+3. `find_recent_changes_for_service` — currently rolled into per-service rendering; not in `get_service_details`.
+4. `list_all_service_dependencies` (architecture map) and the two inventory variants — all-rows reads with shapes specific to renderer needs.
+
+**Decision**: keep `atlas-confluence-sync` reading via `atlas-domain` repositories. Do not refactor.
+
+**Rationale**:
+
+- **MCP is the AI-client surface, not a service-bus.** Tools should be capability-shaped — verbs an AI agent would naturally invoke. `find_soft_deleted_services_with_confluence_page` and `clear_confluence_page_id` are sync-internal mechanics; exposing them as tools dilutes the AI surface with concerns that have no AI use case.
+- **Coupling goes up, not down.** Today, `atlas-confluence-sync` depends on `atlas-domain`. After the refactor, it would depend on `atlas-mcp`, which depends on `atlas-domain` — same data, two layers of contracts (Java repository methods plus JSON tool envelopes). Internal consumers reading direct from the domain layer is the simpler shape.
+- **Operational surface area grows.** Today sync needs the DB. After the refactor, sync needs MCP running (and reachable, and authenticated, and rate-limit-friendly). New failure modes for no functional gain.
+- **Type safety regresses.** `findAllServiceDependencies()` returns `List<ServiceDependencyEdge>` — typed. The MCP equivalent returns a JSON blob requiring deserialization, with bugs surfacing at runtime instead of compile time.
+- **The architecture diagram was wrong, not the code.** ADR-014 and the layout work in Phase 4.5 already pulled the data flow further from the original diagram. Milestone A's docs pass put the diagram in line with reality (parallel exposures from `atlas-domain`); this ADR records the decision to keep that reality.
+
+**Consequences**:
+
+- `architecture.md`'s System Overview is the authoritative shape going forward; ADR-001's "OB1 architecture" reference does not imply MCP-in-the-middle for sync.
+- Future internal consumers (monitoring agent, alert pipeline, …) should also read via `atlas-domain` directly. MCP is reserved for clients that benefit from the AI-tool framing.
+- If a future requirement needs sync to call out across the network (e.g., a multi-region deployment where DB and Confluence-sync are not co-located), revisit. The MCP-bridge cost would be paid for a real reason — network isolation — not architectural symmetry.
+
+---
+
 ## ADR-014: Soft-delete pattern for `services` to support Confluence orphan cleanup
 
 **Status**: Accepted (Phase 4.5 follow-up; closes DD-013)

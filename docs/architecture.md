@@ -27,7 +27,7 @@ Atlas is an AI-maintained service documentation system. It builds a living inven
 The DB is the source of truth. Two consumers read from it in parallel:
 
 - **MCP Server** is the AI-client surface (Claude Desktop, Claude Code, partner agents). It exposes capability-shaped tools (`search_services`, `list_services`, `get_service_details`, `update_service`, `delete_service`, `ping`).
-- **Confluence Sync Agent** is an internal consumer that reads directly from `atlas-domain`'s repositories and renders pages into the ATLAS Confluence space. Sync is *not* an MCP client today — see `decisions.md` for the rationale and `deferred-decisions.md` if you're considering changing that.
+- **Confluence Sync Agent** is an internal consumer that reads directly from `atlas-domain`'s repositories and renders pages into the ATLAS Confluence space. Sync is *not* an MCP client; see ADR-015 for why.
 
 ## Components
 

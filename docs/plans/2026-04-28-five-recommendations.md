@@ -70,4 +70,8 @@ Doc + DD-010 are paired in milestone A because both are small and unblock everyt
 
 ## Status log
 
-- 2026-04-28 — plan committed, milestone A in progress.
+- 2026-04-28 — plan committed.
+- 2026-04-28 — milestone A closed (commit `91c3135`).
+- 2026-04-28 — milestone B closed (commit `b18b854`). Q1 resolved as separate REST endpoint.
+- 2026-04-28 — milestone C closed (commit `5042fd0`). Mermaid via Confluence `code` macro; no cross-links from landing/About.
+- 2026-04-28 — milestone D closed. Decision: keep sync reading via `atlas-domain` repositories. Recorded as **ADR-015**.
