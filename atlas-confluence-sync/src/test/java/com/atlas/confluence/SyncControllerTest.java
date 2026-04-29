@@ -63,6 +63,7 @@ class SyncControllerTest {
     private static final String DS_INV_ID = "DS_INV";
     private static final String ED_INV_ID = "ED_INV";
     private static final String ABOUT_ID = "ABOUT";
+    private static final String ARCH_MAP_ID = "ARCH_MAP";
 
     @Autowired
     org.springframework.jdbc.core.JdbcTemplate jdbc;
@@ -80,6 +81,7 @@ class SyncControllerTest {
         stubWellKnownPage("Inventory: Data Stores", DS_INV_ID);
         stubWellKnownPage("Inventory: External Dependencies", ED_INV_ID);
         stubWellKnownPage("About Atlas", ABOUT_ID);
+        stubWellKnownPage("Atlas — Architecture Map", ARCH_MAP_ID);
     }
 
     private void stubWellKnownPage(String title, String pageId) {

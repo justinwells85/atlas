@@ -156,6 +156,24 @@ public class ServiceRelationshipsRepository {
                 serviceId);
     }
 
+    /**
+     * All service-to-service dependency edges in the graph, with both
+     * endpoints filtered to non-soft-deleted services. Used by the
+     * architecture-map renderer.
+     */
+    public List<ServiceDependencyEdge> findAllServiceDependencies() {
+        return jdbc.query(
+                "SELECT sd.upstream_service_id, us.name AS upstream_name, " +
+                        "       sd.downstream_service_id, ds.name AS downstream_name, " +
+                        "       sd.description " +
+                        "FROM service_dependencies sd " +
+                        "JOIN services us ON sd.upstream_service_id = us.id " +
+                        "JOIN services ds ON sd.downstream_service_id = ds.id " +
+                        "WHERE us.deleted_at IS NULL AND ds.deleted_at IS NULL " +
+                        "ORDER BY us.name, ds.name",
+                this::mapDependencyEdge);
+    }
+
     /** Services that depend on {@code serviceId}. */
     public List<ServiceDependencyEdge> findDownstreamDependenciesOf(UUID serviceId) {
         return jdbc.query(

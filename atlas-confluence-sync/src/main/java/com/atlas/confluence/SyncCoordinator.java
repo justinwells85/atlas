@@ -53,6 +53,7 @@ public class SyncCoordinator {
     private static final String DATA_STORE_INVENTORY_TITLE = "Inventory: Data Stores";
     private static final String EXTERNAL_DEP_INVENTORY_TITLE = "Inventory: External Dependencies";
     private static final String ABOUT_PAGE_TITLE = "About Atlas";
+    private static final String ARCHITECTURE_MAP_TITLE = "Atlas — Architecture Map";
 
     private final ServiceRepository serviceRepository;
     private final ServiceRelationshipsRepository relationships;
@@ -61,6 +62,7 @@ public class SyncCoordinator {
     private final DataStoreInventoryRenderer dataStoreInventoryRenderer;
     private final ExternalDependencyInventoryRenderer externalDepInventoryRenderer;
     private final AboutPageRenderer aboutRenderer;
+    private final ArchitectureMapRenderer architectureMapRenderer;
     private final ConfluenceClient confluenceClient;
     private final String spaceKey;
     private final String baseUrl;
@@ -76,6 +78,7 @@ public class SyncCoordinator {
             DataStoreInventoryRenderer dataStoreInventoryRenderer,
             ExternalDependencyInventoryRenderer externalDepInventoryRenderer,
             AboutPageRenderer aboutRenderer,
+            ArchitectureMapRenderer architectureMapRenderer,
             ConfluenceClient confluenceClient,
             @Value("${atlas.confluence.space-key}") String spaceKey,
             @Value("${atlas.confluence.base-url}") String baseUrl,
@@ -87,6 +90,7 @@ public class SyncCoordinator {
         this.dataStoreInventoryRenderer = dataStoreInventoryRenderer;
         this.externalDepInventoryRenderer = externalDepInventoryRenderer;
         this.aboutRenderer = aboutRenderer;
+        this.architectureMapRenderer = architectureMapRenderer;
         this.confluenceClient = confluenceClient;
         this.spaceKey = spaceKey;
         this.baseUrl = baseUrl;
@@ -253,9 +257,16 @@ public class SyncCoordinator {
                             aboutRenderer.render(now), landingId);
                 });
 
+        String archMapId = confluenceClient.findPageByTitle(resolvedSpaceId, ARCHITECTURE_MAP_TITLE)
+                .orElseGet(() -> {
+                    log.info("Creating Architecture Map page in space {}", resolvedSpaceId);
+                    return confluenceClient.createPage(resolvedSpaceId, ARCHITECTURE_MAP_TITLE,
+                            architectureMapRenderer.render(services, List.of(), now), landingId);
+                });
+
         InventoryPageUrls inventoryUrls = new InventoryPageUrls(
                 pageUrlFor(dsInvId), pageUrlFor(edInvId));
-        return new WellKnownPages(resolvedSpaceId, landingId, dsInvId, edInvId, aboutId, inventoryUrls);
+        return new WellKnownPages(resolvedSpaceId, landingId, dsInvId, edInvId, aboutId, archMapId, inventoryUrls);
     }
 
     /**
@@ -293,6 +304,14 @@ public class SyncCoordinator {
                     aboutRenderer.render(now), pages.landingId());
         } catch (Exception e) {
             log.warn("About page refresh failed: {}", e.getMessage());
+        }
+        try {
+            confluenceClient.updatePage(pages.archMapId(), ARCHITECTURE_MAP_TITLE,
+                    architectureMapRenderer.render(
+                            services, relationships.findAllServiceDependencies(), now),
+                    pages.landingId());
+        } catch (Exception e) {
+            log.warn("Architecture map page refresh failed: {}", e.getMessage());
         }
     }
 
@@ -333,6 +352,7 @@ public class SyncCoordinator {
             String dsInvId,
             String edInvId,
             String aboutId,
+            String archMapId,
             InventoryPageUrls inventoryUrls) {
     }
 }

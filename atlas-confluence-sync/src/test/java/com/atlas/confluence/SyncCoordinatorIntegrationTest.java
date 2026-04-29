@@ -41,6 +41,7 @@ class SyncCoordinatorIntegrationTest {
     private static final String DS_INV_ID = "DS_INV";
     private static final String ED_INV_ID = "ED_INV";
     private static final String ABOUT_ID = "ABOUT";
+    private static final String ARCH_MAP_ID = "ARCH_MAP";
 
     @Container
     @ServiceConnection
@@ -89,6 +90,7 @@ class SyncCoordinatorIntegrationTest {
         stubWellKnownPage("Inventory: Data Stores", DS_INV_ID);
         stubWellKnownPage("Inventory: External Dependencies", ED_INV_ID);
         stubWellKnownPage("About Atlas", ABOUT_ID);
+        stubWellKnownPage("Atlas — Architecture Map", ARCH_MAP_ID);
     }
 
     private void stubWellKnownPage(String title, String pageId) {
@@ -339,6 +341,32 @@ class SyncCoordinatorIntegrationTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> coordinator.syncOne(nonexistent))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(nonexistent.toString());
+    }
+
+    @Test
+    void whenSyncAllRuns_thenArchitectureMapPageIsRefreshedWithLiveDependencyEdges() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .willReturn(okJson("{\"id\":\"NEW_SVC_PAGE\"}")));
+
+        Service domain = createService("atlas-domain");
+        Service mcp = createService("atlas-mcp");
+        // Domain is upstream of MCP: MCP depends on domain.
+        jdbc.update("INSERT INTO service_dependencies (id, upstream_service_id, downstream_service_id, description) " +
+                        "VALUES (?, ?, ?, ?)",
+                java.util.UUID.randomUUID(), domain.getId(), mcp.getId(), "JPA repos");
+
+        coordinator.syncAll();
+
+        // The architecture-map well-known page is PUT with a body containing a
+        // mermaid block and the live edge. JSON serialization escapes "-->" as
+        // "-->" inside the request body string.
+        wireMock.verify(putRequestedFor(urlPathEqualTo("/api/v2/pages/" + ARCH_MAP_ID))
+                .withRequestBody(containing("flowchart"))
+                .withRequestBody(containing("atlas-domain"))
+                .withRequestBody(containing("atlas-mcp")));
     }
 
     private Service createService(String name) {
