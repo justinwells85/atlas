@@ -219,263 +219,80 @@ class InterviewServiceTest {
     @Test
     void whenOptionalFieldsAreProvided_thenTheyArePersisted() {
         InterviewService.TurnResult r = startWithRequiredFields("billing-api", "billing");
-        r = interviewService.next(r.state(), "Java");
-        r = interviewService.next(r.state(), "Spring Boot");
-        r = interviewService.next(r.state(), "https://github.com/example/billing-api");
-        r = interviewService.next(r.state(), "AWS ECS prod cluster");
-        r = interviewService.next(r.state(), "billing-oncall@example.com");
-        r = interviewService.next(r.state(), "99.9% monthly uptime");
-        r = interviewService.next(r.state(), "Owns the invoice numbering sequence.");
+        r = interviewService.next(r.state(), "https://github.com/example/billing-api");      // repo_url
+        r = interviewService.next(r.state(), "https://billing.local/v3/api-docs");           // openapi_spec_url
+        r = interviewService.next(r.state(), "billing-svc");                                  // module_path
+        r = interviewService.next(r.state(), "AWS ECS prod cluster");                        // deployment
+        r = interviewService.next(r.state(), "billing-oncall@example.com");                  // support_contact
+        r = interviewService.next(r.state(), "99.9% monthly uptime");                        // sla
+        r = interviewService.next(r.state(), "Owns the invoice numbering sequence.");        // notes
         r = skipAllSectionGates(r);
 
         assertThat(r.complete()).isTrue();
         Service persisted = repository.findById(r.serviceId()).orElseThrow();
-        assertThat(persisted.getLanguage()).isEqualTo("Java");
-        assertThat(persisted.getFramework()).isEqualTo("Spring Boot");
         assertThat(persisted.getRepoUrl()).isEqualTo("https://github.com/example/billing-api");
+        assertThat(persisted.getOpenapiSpecUrl()).isEqualTo("https://billing.local/v3/api-docs");
+        assertThat(persisted.getModulePath()).isEqualTo("billing-svc");
         assertThat(persisted.getDeployment()).isEqualTo("AWS ECS prod cluster");
         assertThat(persisted.getSupportContact()).isEqualTo("billing-oncall@example.com");
         assertThat(persisted.getSla()).isEqualTo("99.9% monthly uptime");
         assertThat(persisted.getNotes()).isEqualTo("Owns the invoice numbering sequence.");
+        // Language/framework not asked anymore — null until pom-source code-sync fills service_metadata.
+        assertThat(persisted.getLanguage()).isNull();
+        assertThat(persisted.getFramework()).isNull();
     }
 
     @Test
     void whenSomeOptionalsAreProvidedAndOthersSkipped_thenOnlyProvidedOnesPersist() {
         InterviewService.TurnResult r = startWithRequiredFields("metrics-svc", "platform");
-        r = interviewService.next(r.state(), "Go");                  // language
-        r = interviewService.next(r.state(), "skip");                // framework
-        r = interviewService.next(r.state(), "");                    // repoUrl — empty also skips
-        r = interviewService.next(r.state(), "skip");                // deployment
-        r = interviewService.next(r.state(), "platform-oncall");     // supportContact
-        r = interviewService.next(r.state(), "skip");                // sla
-        r = interviewService.next(r.state(), "skip");                // notes
+        r = interviewService.next(r.state(), "https://github.com/example/metrics-svc"); // repo_url
+        r = interviewService.next(r.state(), "skip");                                   // openapi_spec_url
+        r = interviewService.next(r.state(), "");                                       // module_path — empty skips
+        r = interviewService.next(r.state(), "skip");                                   // deployment
+        r = interviewService.next(r.state(), "platform-oncall");                        // support_contact
+        r = interviewService.next(r.state(), "skip");                                   // sla
+        r = interviewService.next(r.state(), "skip");                                   // notes
         r = skipAllSectionGates(r);
 
         assertThat(r.complete()).isTrue();
         Service persisted = repository.findById(r.serviceId()).orElseThrow();
-        assertThat(persisted.getLanguage()).isEqualTo("Go");
+        assertThat(persisted.getRepoUrl()).isEqualTo("https://github.com/example/metrics-svc");
+        assertThat(persisted.getOpenapiSpecUrl()).isNull();
+        assertThat(persisted.getModulePath()).isNull();
         assertThat(persisted.getSupportContact()).isEqualTo("platform-oncall");
-        assertThat(persisted.getFramework()).isNull();
-        assertThat(persisted.getRepoUrl()).isNull();
+        assertThat(persisted.getSla()).isNull();
     }
 
     // -----------------------------------------------------------------------
-    // APIs section (Phase 3.5 M2)
+    // APIs section — REMOVED in M5.
+    //
+    // The interview no longer prompts for APIs; OpenAPI ingestion (M1+)
+    // populates apis rows from services.openapi_spec_url. The 9 tests that
+    // used to exercise the AWAITING_API_* stages were dropped at M5 — the
+    // CodeSyncCoordinatorTest covers the new derivation path. Stages remain
+    // in the InterviewStage enum + applyInput dispatch for backward
+    // compatibility with serialized state.
     // -----------------------------------------------------------------------
 
     @Test
-    void whenSingleApiIsCaptured_thenItPersists() {
-        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
+    void whenInterviewIsAtSectionGates_thenApisGateIsNotAsked() {
+        // The first section gate after the optional services-row fields is
+        // upstream-dependencies, NOT APIs (M5: APIs auto-derived).
+        InterviewService.TurnResult r = startWithRequiredFields("post-m5-svc", "team");
         r = skipAllOptionalServicesRowFields(r);
-        // APIs section
-        r = interviewService.next(r.state(), "yes");
-        r = interviewService.next(r.state(), "/v1/orders");
-        r = interviewService.next(r.state(), "POST");
-        r = interviewService.next(r.state(), "api-key");
-        r = interviewService.next(r.state(), "Place an order");
-        r = interviewService.next(r.state(), "skip");               // consumers sub-gate
-        r = interviewService.next(r.state(), "no");                 // another?
-        r = skipDependencyAndStorageSections(r);
 
-        assertThat(r.complete()).isTrue();
-        var apis = relationships.findApisFor(r.serviceId());
-        assertThat(apis).hasSize(1);
-        assertThat(apis.get(0).path()).isEqualTo("/v1/orders");
-        assertThat(apis.get(0).method()).isEqualTo("POST");
-        assertThat(apis.get(0).authMethod()).isEqualTo("api-key");
-        assertThat(apis.get(0).description()).isEqualTo("Place an order");
+        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_HAS_UPSTREAM_DEPS);
+        assertThat(r.question()).contains("depend on any other services");
     }
 
     @Test
-    void whenMultipleApisAreCaptured_thenAllPersist() {
-        InterviewService.TurnResult r = startWithRequiredFields("inventory-api", "inventory");
-        r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "yes");
-        // First API
-        r = interviewService.next(r.state(), "/v1/items");
-        r = interviewService.next(r.state(), "GET");
-        r = interviewService.next(r.state(), "skip");                // auth optional
-        r = interviewService.next(r.state(), "List inventory items");
-        r = interviewService.next(r.state(), "skip");                // consumers sub-gate
-        r = interviewService.next(r.state(), "yes");                 // another?
-        // Second API
-        r = interviewService.next(r.state(), "/v1/items/{id}");
-        r = interviewService.next(r.state(), "GET");
-        r = interviewService.next(r.state(), "");                    // auth empty also skips
-        r = interviewService.next(r.state(), "skip");                // description optional
-        r = interviewService.next(r.state(), "skip");                // consumers sub-gate
-        r = interviewService.next(r.state(), "no");                  // another?
-        r = skipDependencyAndStorageSections(r);
+    void whenInterviewWalksOptionalFields_thenLanguageAndFrameworkAreNotAsked() {
+        // The first optional-field prompt after STATUS is REPO_URL, not LANGUAGE
+        // (M5: language/framework auto-derived from pom.xml).
+        InterviewService.TurnResult r = startWithRequiredFields("no-lang-prompt", "team");
 
-        assertThat(r.complete()).isTrue();
-        var apis = relationships.findApisFor(r.serviceId());
-        assertThat(apis).hasSize(2);
-        // findApisFor orders by (path, method).
-        assertThat(apis.get(0).path()).isEqualTo("/v1/items");
-        assertThat(apis.get(0).description()).isEqualTo("List inventory items");
-        assertThat(apis.get(0).authMethod()).isNull();
-        assertThat(apis.get(1).path()).isEqualTo("/v1/items/{id}");
-        assertThat(apis.get(1).description()).isNull();
-    }
-
-    @Test
-    void whenInvalidHttpMethodIsProvided_thenInterviewReprompts() {
-        InterviewService.TurnResult r = startWithRequiredFields("widgets-api", "widgets");
-        r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "yes");
-        r = interviewService.next(r.state(), "/v1/widgets");
-        r = interviewService.next(r.state(), "BANANA");
-
-        assertThat(r.complete()).isFalse();
-        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_API_METHOD);
-        assertThat(r.question()).containsIgnoringCase("method must be one of");
-
-        // After a valid method, the interview moves on.
-        r = interviewService.next(r.state(), "POST");
-        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_API_AUTH);
-    }
-
-    @Test
-    void whenNonHttpProtocolMethodIsProvided_thenInterviewAccepts() {
-        // DD-010: intake must accept non-HTTP API surfaces (MCP tools, gRPC,
-        // GraphQL, AMQP queues, Kafka topics) without re-prompt loops.
-        // Walks one MCP-method API end to end and verifies it persists.
-        InterviewService.TurnResult r = startWithRequiredFields("atlas-mcp", "atlas");
-        r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "yes");                 // APIs gate
-        r = interviewService.next(r.state(), "search_services");
-        r = interviewService.next(r.state(), "MCP");                 // non-HTTP method
-        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_API_AUTH);
-        r = interviewService.next(r.state(), "skip");                // auth
-        r = interviewService.next(r.state(), "MCP tool. Search by name.");
-        r = interviewService.next(r.state(), "skip");                // consumers gate
-        r = interviewService.next(r.state(), "no");                  // another?
-        r = skipDependencyAndStorageSections(r);
-
-        assertThat(r.complete()).isTrue();
-        var apis = relationships.findApisFor(r.serviceId());
-        assertThat(apis).hasSize(1);
-        assertThat(apis.get(0).method()).isEqualTo("MCP");
-    }
-
-    @Test
-    void whenAnyOfTheRecognisedNonHttpProtocolsIsProvided_thenAllAreAccepted() {
-        // Whitelist coverage: MCP, GRPC, GRAPHQL, AMQP, KAFKA must all pass
-        // validation. Lowercase input is normalised to upper-case before check.
-        for (String method : java.util.List.of("MCP", "gRPC", "graphql", "AMQP", "kafka")) {
-            InterviewService.TurnResult r = startWithRequiredFields(
-                    "svc-" + method.toLowerCase(), "team");
-            r = skipAllOptionalServicesRowFields(r);
-            r = interviewService.next(r.state(), "yes");
-            r = interviewService.next(r.state(), "/some-surface");
-            r = interviewService.next(r.state(), method);
-
-            assertThat(r.state().stage())
-                    .as("method '%s' should advance past AWAITING_API_METHOD", method)
-                    .isEqualTo(InterviewStage.AWAITING_API_AUTH);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // API consumers sub-loop (Phase 3.6)
-    // -----------------------------------------------------------------------
-
-    @Test
-    void whenApiHasOneConsumer_thenApiConsumerRowIsPersisted() {
-        // Pre-existing service to act as the consumer.
-        Service ui = saveSimpleService("storefront-ui", "storefront");
-
-        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
-        r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "yes");                 // APIs gate
-        r = interviewService.next(r.state(), "/v1/orders");
-        r = interviewService.next(r.state(), "POST");
-        r = interviewService.next(r.state(), "skip");                // auth
-        r = interviewService.next(r.state(), "Place an order");
-        r = interviewService.next(r.state(), "yes");                 // consumers gate
-        r = interviewService.next(r.state(), "storefront-ui");
-        r = interviewService.next(r.state(), "called when user clicks Buy");
-        r = interviewService.next(r.state(), "no");                  // another consumer?
-        r = interviewService.next(r.state(), "no");                  // another API?
-        r = skipDependencyAndStorageSections(r);
-
-        assertThat(r.complete()).isTrue();
-        var apis = relationships.findApisFor(r.serviceId());
-        assertThat(apis).hasSize(1);
-        java.util.UUID apiId = apis.get(0).id();
-        Long consumerCount = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM api_consumers WHERE api_id = ? AND consumer_service_id = ?",
-                Long.class, apiId, ui.getId());
-        assertThat(consumerCount).isEqualTo(1L);
-        String description = jdbc.queryForObject(
-                "SELECT description FROM api_consumers WHERE api_id = ?",
-                String.class, apiId);
-        assertThat(description).isEqualTo("called when user clicks Buy");
-    }
-
-    @Test
-    void whenApiHasMultipleConsumers_thenAllPersist() {
-        saveSimpleService("storefront-ui", "storefront");
-        saveSimpleService("admin-ui", "platform");
-
-        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
-        r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "yes");                 // APIs gate
-        r = interviewService.next(r.state(), "/v1/orders");
-        r = interviewService.next(r.state(), "GET");
-        r = interviewService.next(r.state(), "skip");                // auth
-        r = interviewService.next(r.state(), "List orders");
-        r = interviewService.next(r.state(), "yes");                 // consumers gate
-        r = interviewService.next(r.state(), "storefront-ui");
-        r = interviewService.next(r.state(), "user order history");
-        r = interviewService.next(r.state(), "yes");                 // another consumer?
-        r = interviewService.next(r.state(), "admin-ui");
-        r = interviewService.next(r.state(), "ops dashboard");
-        r = interviewService.next(r.state(), "no");                  // another consumer?
-        r = interviewService.next(r.state(), "no");                  // another API?
-        r = skipDependencyAndStorageSections(r);
-
-        assertThat(r.complete()).isTrue();
-        var apis = relationships.findApisFor(r.serviceId());
-        assertThat(apis).hasSize(1);
-        Long count = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM api_consumers WHERE api_id = ?",
-                Long.class, apis.get(0).id());
-        assertThat(count).isEqualTo(2L);
-    }
-
-    @Test
-    void whenApiConsumerReferencesUnknownService_thenInterviewReprompts() {
-        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
-        r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "yes");
-        r = interviewService.next(r.state(), "/v1/orders");
-        r = interviewService.next(r.state(), "POST");
-        r = interviewService.next(r.state(), "skip");
-        r = interviewService.next(r.state(), "skip");
-        r = interviewService.next(r.state(), "yes");                 // consumers gate
-        r = interviewService.next(r.state(), "no-such-consumer");
-
-        assertThat(r.complete()).isFalse();
-        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_API_CONSUMER_NAME);
-        assertThat(r.question()).contains("No service named 'no-such-consumer'");
-    }
-
-    @Test
-    void whenApiConsumerIsSelfReference_thenInterviewReprompts() {
-        InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
-        r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "yes");
-        r = interviewService.next(r.state(), "/v1/orders");
-        r = interviewService.next(r.state(), "POST");
-        r = interviewService.next(r.state(), "skip");
-        r = interviewService.next(r.state(), "skip");
-        r = interviewService.next(r.state(), "yes");
-        r = interviewService.next(r.state(), "orders-api");          // self
-
-        assertThat(r.complete()).isFalse();
-        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_API_CONSUMER_NAME);
-        assertThat(r.question()).containsIgnoringCase("can't consume its own");
+        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_REPO_URL);
+        assertThat(r.question()).containsIgnoringCase("source repository URL");
     }
 
     // -----------------------------------------------------------------------
@@ -505,7 +322,6 @@ class InterviewServiceTest {
     void whenUpstreamReferencesUnknownService_thenInterviewReprompts() {
         InterviewService.TurnResult r = startWithRequiredFields("checkout-svc", "checkout");
         r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "skip");                // APIs
         r = interviewService.next(r.state(), "yes");                 // upstream gate
         r = interviewService.next(r.state(), "no-such-service");
 
@@ -518,7 +334,6 @@ class InterviewServiceTest {
     void whenUpstreamReferencesSelf_thenInterviewReprompts() {
         InterviewService.TurnResult r = startWithRequiredFields("loop-svc", "loops");
         r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "skip");                // APIs
         r = interviewService.next(r.state(), "yes");                 // upstream gate
         r = interviewService.next(r.state(), "loop-svc");            // self
 
@@ -535,7 +350,6 @@ class InterviewServiceTest {
 
         InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
         r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "skip");                // APIs
         // Upstream: orders depends on inventory
         r = interviewService.next(r.state(), "yes");
         r = interviewService.next(r.state(), "inventory-api");
@@ -568,7 +382,6 @@ class InterviewServiceTest {
 
         InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
         r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "skip");                // APIs
         r = interviewService.next(r.state(), "yes");                 // upstream gate
         r = interviewService.next(r.state(), "inventory-api");
         r = interviewService.next(r.state(), "first edge description");
@@ -588,7 +401,6 @@ class InterviewServiceTest {
     void whenNewDatabaseIsCaptured_thenBothDatabaseAndLinkRowsAreCreated() {
         InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
         r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "skip");                // APIs
         r = interviewService.next(r.state(), "skip");                // upstream
         r = interviewService.next(r.state(), "skip");                // downstream
         // Databases: new entity
@@ -616,7 +428,6 @@ class InterviewServiceTest {
 
         InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
         r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "skip");                // APIs
         r = interviewService.next(r.state(), "skip");                // upstream
         r = interviewService.next(r.state(), "skip");                // downstream
         r = interviewService.next(r.state(), "yes");                 // databases gate
@@ -643,7 +454,6 @@ class InterviewServiceTest {
     void whenSameDatabaseIsAddedTwice_thenInterviewReprompts() {
         InterviewService.TurnResult r = startWithRequiredFields("orders-api", "orders");
         r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "skip");                // APIs
         r = interviewService.next(r.state(), "skip");                // upstream
         r = interviewService.next(r.state(), "skip");                // downstream
         r = interviewService.next(r.state(), "yes");                 // databases gate
@@ -667,7 +477,6 @@ class InterviewServiceTest {
     void whenNewExternalDependencyIsCaptured_thenBothEntityAndLinkRowsAreCreated() {
         InterviewService.TurnResult r = startWithRequiredFields("payments-api", "payments");
         r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "skip");                // APIs
         r = interviewService.next(r.state(), "skip");                // upstream
         r = interviewService.next(r.state(), "skip");                // downstream
         r = interviewService.next(r.state(), "skip");                // databases
@@ -692,7 +501,6 @@ class InterviewServiceTest {
 
         InterviewService.TurnResult r = startWithRequiredFields("notifications-svc", "platform");
         r = skipAllOptionalServicesRowFields(r);
-        r = interviewService.next(r.state(), "skip");                // APIs
         r = interviewService.next(r.state(), "skip");                // upstream
         r = interviewService.next(r.state(), "skip");                // downstream
         r = interviewService.next(r.state(), "skip");                // databases
@@ -724,18 +532,15 @@ class InterviewServiceTest {
     }
 
     private InterviewService.TurnResult skipAllOptionalServicesRowFields(InterviewService.TurnResult r) {
+        // 7 optional services-row prompts: REPO_URL, OPENAPI_SPEC_URL, MODULE_PATH,
+        // DEPLOYMENT, SUPPORT_CONTACT, SLA, NOTES (M5 dropped LANGUAGE/FRAMEWORK).
         for (int i = 0; i < 7; i++) r = interviewService.next(r.state(), "skip");
         return r;
     }
 
     private InterviewService.TurnResult skipAllSectionGates(InterviewService.TurnResult r) {
-        // 5 section gates: APIs, upstream deps, downstream deps, databases, external deps
-        for (int i = 0; i < 5; i++) r = interviewService.next(r.state(), "skip");
-        return r;
-    }
-
-    private InterviewService.TurnResult skipDependencyAndStorageSections(InterviewService.TurnResult r) {
-        // 4 sections after APIs: upstream, downstream, databases, external deps
+        // 4 section gates: upstream deps, downstream deps, databases, external deps
+        // (M5 dropped the APIs gate — auto-derived from openapi).
         for (int i = 0; i < 4; i++) r = interviewService.next(r.state(), "skip");
         return r;
     }

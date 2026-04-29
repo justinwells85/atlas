@@ -45,8 +45,10 @@ import static com.atlas.intake.InterviewStage.AWAITING_HAS_DOWNSTREAM_DEPS;
 import static com.atlas.intake.InterviewStage.AWAITING_HAS_EXTERNAL_DEPS;
 import static com.atlas.intake.InterviewStage.AWAITING_HAS_UPSTREAM_DEPS;
 import static com.atlas.intake.InterviewStage.AWAITING_LANGUAGE;
+import static com.atlas.intake.InterviewStage.AWAITING_MODULE_PATH;
 import static com.atlas.intake.InterviewStage.AWAITING_NAME;
 import static com.atlas.intake.InterviewStage.AWAITING_NOTES;
+import static com.atlas.intake.InterviewStage.AWAITING_OPENAPI_SPEC_URL;
 import static com.atlas.intake.InterviewStage.AWAITING_OWNER_TEAM;
 import static com.atlas.intake.InterviewStage.AWAITING_REPO_URL;
 import static com.atlas.intake.InterviewStage.AWAITING_SLA;
@@ -122,18 +124,23 @@ public class InterviewService {
                     "What's the current status of " + d.name() + " — active, deprecated, or in_dev?");
         }
 
-        // --- Optional services-row fields (M1) ----------------------------
-        if (!s.hasVisitedOptional(AWAITING_LANGUAGE)) {
-            return askWithError(s.atStage(AWAITING_LANGUAGE),
-                    "What language is " + d.name() + " written in? (or 'skip')");
-        }
-        if (!s.hasVisitedOptional(AWAITING_FRAMEWORK)) {
-            return askWithError(s.atStage(AWAITING_FRAMEWORK),
-                    "What framework or runtime does it use? (or 'skip')");
-        }
+        // --- Optional services-row fields ---------------------------------
+        // M5 dropped LANGUAGE / FRAMEWORK / HAS_APIS prompts: pom.xml +
+        // openapi auto-derivation populates the equivalent rows.
+        // OPENAPI_SPEC_URL and MODULE_PATH replace them — these are the
+        // small inputs intake still needs from the human so code-sync has
+        // somewhere to look.
         if (!s.hasVisitedOptional(AWAITING_REPO_URL)) {
             return askWithError(s.atStage(AWAITING_REPO_URL),
                     "Source repository URL? (or 'skip')");
+        }
+        if (!s.hasVisitedOptional(AWAITING_OPENAPI_SPEC_URL)) {
+            return askWithError(s.atStage(AWAITING_OPENAPI_SPEC_URL),
+                    "OpenAPI spec URL for code-sync to fetch? (e.g., 'http://localhost:8080/v3/api-docs', or 'skip')");
+        }
+        if (!s.hasVisitedOptional(AWAITING_MODULE_PATH)) {
+            return askWithError(s.atStage(AWAITING_MODULE_PATH),
+                    "Module path inside the repo (for multi-module repos)? (e.g., 'atlas-intake', or 'skip')");
         }
         if (!s.hasVisitedOptional(AWAITING_DEPLOYMENT)) {
             return askWithError(s.atStage(AWAITING_DEPLOYMENT),
@@ -150,15 +157,6 @@ public class InterviewService {
         if (!s.hasVisitedOptional(AWAITING_NOTES)) {
             return askWithError(s.atStage(AWAITING_NOTES),
                     "Any notes worth capturing? (or 'skip')");
-        }
-
-        // --- APIs section (M2) --------------------------------------------
-        if (!s.hasVisitedOptional(AWAITING_HAS_APIS)) {
-            return askWithError(s.atStage(AWAITING_HAS_APIS),
-                    "Does " + d.name() + " expose any APIs? (yes/skip)");
-        }
-        if (!s.apisSectionClosed()) {
-            return askInsideApisSection(s);
         }
 
         // --- Upstream dependencies (M2) -----------------------------------
@@ -334,6 +332,8 @@ public class InterviewService {
             case AWAITING_LANGUAGE -> applyOptional(s, trimmed, AWAITING_LANGUAGE, ServiceDraft::withLanguage);
             case AWAITING_FRAMEWORK -> applyOptional(s, trimmed, AWAITING_FRAMEWORK, ServiceDraft::withFramework);
             case AWAITING_REPO_URL -> applyOptional(s, trimmed, AWAITING_REPO_URL, ServiceDraft::withRepoUrl);
+            case AWAITING_OPENAPI_SPEC_URL -> applyOptional(s, trimmed, AWAITING_OPENAPI_SPEC_URL, ServiceDraft::withOpenapiSpecUrl);
+            case AWAITING_MODULE_PATH -> applyOptional(s, trimmed, AWAITING_MODULE_PATH, ServiceDraft::withModulePath);
             case AWAITING_DEPLOYMENT -> applyOptional(s, trimmed, AWAITING_DEPLOYMENT, ServiceDraft::withDeployment);
             case AWAITING_SUPPORT_CONTACT -> applyOptional(s, trimmed, AWAITING_SUPPORT_CONTACT, ServiceDraft::withSupportContact);
             case AWAITING_SLA -> applyOptional(s, trimmed, AWAITING_SLA, ServiceDraft::withSla);
@@ -706,6 +706,8 @@ public class InterviewService {
         entity.setLanguage(d.language());
         entity.setFramework(d.framework());
         entity.setRepoUrl(d.repoUrl());
+        entity.setOpenapiSpecUrl(d.openapiSpecUrl());
+        entity.setModulePath(d.modulePath());
         entity.setDeployment(d.deployment());
         entity.setSupportContact(d.supportContact());
         entity.setSla(d.sla());

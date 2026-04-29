@@ -8,16 +8,27 @@ public enum InterviewStage {
     AWAITING_OWNER_TEAM,
     AWAITING_STATUS,
 
-    // Optional services-row fields (M1)
+    // Optional services-row fields (M1).
+    // AWAITING_LANGUAGE / AWAITING_FRAMEWORK retained for backward
+    // compatibility with serialized state shapes; M5 stopped emitting these
+    // prompts since pom.xml ingestion populates the equivalent service_metadata
+    // observations. Re-introducing the prompts is a one-line addition in
+    // InterviewService.next() if a future direction reverses this.
     AWAITING_LANGUAGE,
     AWAITING_FRAMEWORK,
     AWAITING_REPO_URL,
+    AWAITING_OPENAPI_SPEC_URL,   // M5: enables openapi auto-derivation
+    AWAITING_MODULE_PATH,        // M5: enables multi-module repos for code-sync
     AWAITING_DEPLOYMENT,
     AWAITING_SUPPORT_CONTACT,
     AWAITING_SLA,
     AWAITING_NOTES,
 
-    // APIs section (M2 / Phase 3.6)
+    // APIs section (M2 / Phase 3.6).
+    // Stages retained for backward compatibility with serialized state shapes
+    // and applyInput dispatch; M5 dropped the APIs prompts entirely because
+    // OpenAPI ingestion (M1+) populates apis rows from the service's
+    // openapi_spec_url. Reintroducing these prompts is opt-in if needed.
     AWAITING_HAS_APIS,
     AWAITING_API_PATH,
     AWAITING_API_METHOD,
