@@ -26,15 +26,48 @@ public class ServiceRelationshipsRepository {
 
     // --- Writes (Phase 3.5) -------------------------------------------------
 
-    /** Insert one row in {@code apis}. Returns the generated id. */
+    /**
+     * Insert one row in {@code apis} with explicit provenance. Returns the generated id.
+     * {@code source} must be one of {@code intake}, {@code openapi}, {@code pom-xml}, {@code tests}
+     * (CHECK-constrained at the DB layer per V13).
+     */
     public UUID insertApi(UUID serviceId, String path, String method,
-                          String authMethod, String description) {
+                          String authMethod, String description, String source) {
         UUID id = UUID.randomUUID();
         jdbc.update(
-                "INSERT INTO apis (id, service_id, path, method, auth_method, description) " +
-                        "VALUES (?, ?, ?, ?, ?, ?)",
-                id, serviceId, path, method, authMethod, description);
+                "INSERT INTO apis (id, service_id, path, method, auth_method, description, source) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                id, serviceId, path, method, authMethod, description, source);
         return id;
+    }
+
+    /** Update mutable fields of an existing API row (auth_method, description). Used by code-sync upserts. */
+    public void updateApi(UUID apiId, String authMethod, String description) {
+        jdbc.update(
+                "UPDATE apis SET auth_method = ?, description = ?, updated_at = CURRENT_TIMESTAMP " +
+                        "WHERE id = ?",
+                authMethod, description, apiId);
+    }
+
+    /** Delete one API row by id. Used by code-sync to clean up endpoints removed from the spec. */
+    public void deleteApi(UUID apiId) {
+        jdbc.update("DELETE FROM apis WHERE id = ?", apiId);
+    }
+
+    /** Find APIs of a given provenance for one service. Used by code-sync upsert logic. */
+    public List<ApiSummary> findApisBySource(UUID serviceId, String source) {
+        return jdbc.query(
+                "SELECT id, path, method, auth_method, description, source " +
+                        "FROM apis WHERE service_id = ? AND source = ? " +
+                        "ORDER BY path, method",
+                (rs, i) -> new ApiSummary(
+                        (UUID) rs.getObject("id"),
+                        rs.getString("path"),
+                        rs.getString("method"),
+                        rs.getString("auth_method"),
+                        rs.getString("description"),
+                        rs.getString("source")),
+                serviceId, source);
     }
 
     /** Insert one row in {@code api_consumers} linking an API to a consumer service. */
@@ -130,14 +163,15 @@ public class ServiceRelationshipsRepository {
 
     public List<ApiSummary> findApisFor(UUID serviceId) {
         return jdbc.query(
-                "SELECT id, path, method, auth_method, description " +
+                "SELECT id, path, method, auth_method, description, source " +
                         "FROM apis WHERE service_id = ? ORDER BY path, method",
                 (rs, i) -> new ApiSummary(
                         (UUID) rs.getObject("id"),
                         rs.getString("path"),
                         rs.getString("method"),
                         rs.getString("auth_method"),
-                        rs.getString("description")),
+                        rs.getString("description"),
+                        rs.getString("source")),
                 serviceId);
     }
 

@@ -206,7 +206,7 @@ class ServicePageRendererTest {
     @Test
     void whenServiceHasNoApiConsumers_thenApiRendersWithoutConsumerLine() {
         Service s = baseService();
-        ApiSummary api = new ApiSummary(UUID.randomUUID(), "/v1/health", "GET", "none", "Health check");
+        ApiSummary api = new ApiSummary(UUID.randomUUID(), "/v1/health", "GET", "none", "Health check", "intake");
         ServicePageContext ctx = new ServicePageContext(
                 s,
                 List.of(new ApiPresentation(api, List.of())),
@@ -241,7 +241,7 @@ class ServicePageRendererTest {
         meta.put("data_classification", "PII");
         s.setMetadata(meta);
 
-        ApiSummary api1 = new ApiSummary(UUID.randomUUID(), "/v1/invoices", "GET", "bearer", "Invoice list endpoint");
+        ApiSummary api1 = new ApiSummary(UUID.randomUUID(), "/v1/invoices", "GET", "bearer", "Invoice list endpoint", "intake");
         ApiConsumer consumer = new ApiConsumer(UUID.randomUUID(), "checkout-service", "Reads invoice totals");
         ApiPresentation api1Pres = new ApiPresentation(api1, List.of(consumer));
 

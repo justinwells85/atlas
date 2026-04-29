@@ -140,3 +140,27 @@ Decision point at end of M3: code-sync responsibilities are now substantial — 
 ## Status log
 
 - 2026-04-29 — plan committed.
+- 2026-04-29 — M1 closed.
+
+## Reflections
+
+### M1 — Provenance + OpenAPI ingestion
+
+**What's working**
+
+- **Per-source provenance is the right hinge.** The `apis.source` column with a CHECK constraint plus a "code-sync only touches its own source rows" rule kept intake-source rows safe through every code path, including the live round-trip. Every behavior we cared about (skip on collision, delete-when-removed, idempotent re-run) reduces to a query on `source`.
+- **Behaviour-focused tests caught the easy bugs; the live round-trip caught the hard ones.** The seven Testcontainers tests passed first try, but pointing the system at atlas-intake's own DB exposed two design gaps the unit tests had blind spots on: (a) the unique constraint on `(service_id, method, path)` blocks parallel intake- and openapi-source rows, and (b) per-statement auto-commit means a partial-failure mid-loop leaves orphan rows. Both fixes (skip-when-intake-owns + `@Transactional`) plus two new tests landed in the same milestone.
+- **WireMock as the only mock works.** ADR-006's "mock at architectural seams only" pays off: the parser, repository, and JPA all run real against Testcontainers, and the only fake is the remote OpenAPI host. Every test exercises the production code path end-to-end below the HTTP boundary.
+- **Springdoc + the JAXB shim is a reliable dogfood input.** The `javax.xml.bind` gap on Spring Boot 4 is annoying but documented; the one-line shim resolves it.
+
+**What's not — and what to do about it**
+
+- **TDD discipline drifted toward "tests-and-code-together," not "tests-first."** I drafted the coordinator skeleton, then wrote tests, then ran them green on the first compile. The behavior coupling is correct (tests don't pin internals) but the red→green discipline ADR-006 calls for got cut to half. Next milestone: write at least one test per behavior *before* the corresponding impl line exists, and only then implement.
+- **Dogfood data is already drifting.** The live test exposed `/api/smoke/anthropic` (intake row) versus `/api/smoke/llm` (real path post-ADR-013). Intake never updates the row when code changes. This is exactly the staleness code-driven docs is meant to fix and gives M5's "interview shrinkage" a concrete first target: stop asking about APIs at intake time, let code-sync own them, retire stale intake rows on re-sync.
+- **Spec descriptions are blank from springdoc unless controllers carry `@Operation`.** Today every openapi row in the dogfood has a null description. M2's per-endpoint Confluence pages will look thin without these — worth either annotating Atlas's controllers or accepting the gap as a "production team adds annotations to their controllers" handoff item.
+- **Skip-on-collision is the conservative choice and probably wrong long-term.** Today, intake's row stays authoritative because we don't want to surprise-overwrite human work. By M5 the model flips: intake stops asking about APIs, openapi becomes the only source, and the skip becomes dead code. Worth reading the skip behavior as transitional rather than permanent.
+- **Code-sync lives inside `atlas-intake` for now.** Fine for one writer, will feel cramped by M3 when test extraction adds more surface. Plan-stated trigger: revisit at M3.
+
+**Resumable summary** *(propagated to `docs/handoff/current-state.md`)*
+
+Branch `main` at commit pending — this commit lands M1 of the code-driven-documentation plan. 168 tests pass across four modules (atlas-domain 33, atlas-intake 50, atlas-mcp 24, atlas-confluence-sync 61). New: `apis.source` provenance column + `services.openapi_spec_url` (V13 migration); `OpenApiFetcher` / `SwaggerOpenApiParser` / `CodeSyncCoordinator` / `CodeSyncController` (in `atlas-intake/src/main/java/com/atlas/codesync/`); springdoc 2.8.13 + jaxb-api 2.3.1 deps so atlas-intake exposes its own `/v3/api-docs`. Live-verified: hitting `POST /api/code-sync/refresh/{atlas-intake-id}` produced 3 openapi-source rows, 1 skip on intake-owned, intake rows untouched. Next milestone: M2 — per-endpoint Confluence pages parented under the service page, with cleanup-on-removal mirroring ADR-014. Open carry-overs: stale intake row at `/api/smoke/anthropic` (predates ADR-013 rename) — not cleaned; springdoc-generated descriptions are null without `@Operation` annotations; code-sync still inside `atlas-intake` (revisit at M3).

@@ -660,7 +660,7 @@ public class InterviewService {
 
         for (ApiDraft api : s.apis()) {
             UUID apiId = relationships.insertApi(serviceId, api.path(), api.method(),
-                    api.authMethod(), api.description());
+                    api.authMethod(), api.description(), "intake");
             for (ApiConsumerDraft consumer : api.consumers()) {
                 relationships.insertApiConsumer(apiId, consumer.consumerServiceId(), consumer.description());
             }

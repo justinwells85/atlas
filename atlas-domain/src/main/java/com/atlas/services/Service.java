@@ -66,6 +66,9 @@ public class Service {
     @Column(nullable = false)
     private Map<String, Object> metadata = new HashMap<>();
 
+    @Column(name = "openapi_spec_url")
+    private String openapiSpecUrl;
+
     @Column(name = "confluence_page_id")
     private String confluencePageId;
 
@@ -127,6 +130,9 @@ public class Service {
 
     public Map<String, Object> getMetadata() { return metadata; }
     public void setMetadata(Map<String, Object> metadata) { this.metadata = metadata; }
+
+    public String getOpenapiSpecUrl() { return openapiSpecUrl; }
+    public void setOpenapiSpecUrl(String openapiSpecUrl) { this.openapiSpecUrl = openapiSpecUrl; }
 
     public String getConfluencePageId() { return confluencePageId; }
     public void setConfluencePageId(String confluencePageId) { this.confluencePageId = confluencePageId; }

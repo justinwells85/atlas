@@ -7,5 +7,6 @@ public record ApiSummary(
         String path,
         String method,
         String authMethod,
-        String description) {
+        String description,
+        String source) {
 }
