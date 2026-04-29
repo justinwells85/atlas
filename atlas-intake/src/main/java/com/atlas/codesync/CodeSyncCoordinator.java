@@ -97,25 +97,33 @@ public class CodeSyncCoordinator {
             }
         }
 
-        Map<String, TestScenario> existing = new HashMap<>();
+        // Live view: latest observation per (package, class, method) where
+        // presence='present'. Append-only — we never UPDATE or DELETE rows;
+        // disappearance is recorded as a tombstone observation.
+        Map<String, TestScenario> live = new HashMap<>();
         for (TestScenario s : relationships.findTestScenariosFor(serviceId)) {
-            existing.put(scenarioKey(s.packageName(), s.className(), s.methodName()), s);
+            live.put(scenarioKey(s.packageName(), s.className(), s.methodName()), s);
         }
 
         int created = 0;
         for (TestMethodRecord rec : fresh) {
             String k = scenarioKey(rec.packageName(), rec.className(), rec.methodName());
-            if (existing.remove(k) == null) {
+            if (live.remove(k) == null) {
                 relationships.insertTestScenario(serviceId,
                         rec.packageName(), rec.className(), rec.methodName(),
                         TESTS_SOURCE);
                 created++;
             }
+            // Already in live view (and tests have no mutable content fields) → no-op.
         }
 
-        int deleted = existing.size();
-        for (TestScenario stale : existing.values()) {
-            relationships.deleteTestScenario(stale.id());
+        // Anything left in `live` is a scenario the source code no longer
+        // contains — append a tombstone.
+        int deleted = live.size();
+        for (TestScenario stale : live.values()) {
+            relationships.writeTestScenarioTombstone(serviceId,
+                    stale.packageName(), stale.className(), stale.methodName(),
+                    TESTS_SOURCE);
         }
 
         if (created + deleted > 0) {
@@ -140,20 +148,39 @@ public class CodeSyncCoordinator {
     }
 
     /**
-     * Refresh the OpenAPI-derived APIs for one service.
+     * Refresh the OpenAPI-derived APIs for one service (M3.5: append-only).
      *
-     * <p>Atomic: fetch + parse happen before any DB mutation, and the mutation is
-     * wrapped in a transaction so a partial failure (constraint violation, DB
-     * blip) leaves the previous state intact rather than half-applied.
+     * <p>Atomic: fetch + parse happen before any DB mutation, and the mutation
+     * is wrapped in a transaction so a partial failure leaves the previous
+     * observations intact rather than half-applied.
+     *
+     * <p>Per the project rule (persist as observed; updates decorate, never
+     * overwrite), this method <b>only inserts</b>; it never UPDATEs or
+     * DELETEs an apis row. Three insert paths:
+     *
+     * <ul>
+     *   <li><b>created</b>: a fresh endpoint with no live observation in the
+     *       openapi-source history → INSERT presence='present'.</li>
+     *   <li><b>updated</b>: a fresh endpoint whose live observation has
+     *       different content (description / auth method) → INSERT a new
+     *       presence='present' observation, carrying forward the previous
+     *       confluence_page_id so the existing endpoint page keeps tracking.</li>
+     *   <li><b>deleted</b>: a key in the live openapi history that the spec
+     *       no longer contains → INSERT a presence='absent' tombstone, also
+     *       carrying the previous confluence_page_id so the cleanup pass
+     *       can find it.</li>
+     * </ul>
      *
      * <p>Endpoints whose {@code (method, path)} is already owned by an
-     * {@code 'intake'}-source row are <b>skipped</b>, not overwritten. Intake's
-     * row stays authoritative until the user re-runs intake or removes the
-     * endpoint there — the unique constraint on
-     * {@code (service_id, method, path)} forbids a parallel openapi row anyway.
-     * The skip is reflected in {@link CodeSyncResult#skipped()}.
+     * {@code 'intake'}-source live observation are skipped, not decorated.
+     * Intake stays authoritative for those keys until the user re-runs
+     * intake. Skips don't write any row.
      *
-     * @return counts of inserted/updated/deleted/skipped rows.
+     * <p>A refresh that observes nothing new produces no insert (the table
+     * doesn't grow just to record sameness).
+     *
+     * @return counts of inserted/updated/deleted/skipped writes (all
+     *         "deleted" writes are tombstones, not actual deletes).
      * @throws IllegalArgumentException if no service exists for the given id.
      */
     @Transactional
@@ -167,17 +194,18 @@ public class CodeSyncCoordinator {
         }
 
         // Fetch + parse first; only mutate the DB on success so a 404 or
-        // malformed spec leaves the existing rows untouched.
+        // malformed spec leaves the existing observations untouched.
         String specText = fetcher.fetch(url);
         List<EndpointRecord> endpoints = parser.parse(specText);
 
-        // Build a lookup of existing openapi-source rows keyed by (METHOD, path).
-        // Intake-source rows are loaded into a separate "do not touch" set so
-        // the loop knows to skip endpoints intake has already covered.
-        Map<String, ApiSummary> existing = new HashMap<>();
+        // Live view of openapi-source rows: latest observation per key with
+        // presence='present'. Tombstoned keys aren't here, so re-appearance
+        // of a previously-removed endpoint is naturally treated as "created".
+        Map<String, ApiSummary> live = new HashMap<>();
         for (ApiSummary row : relationships.findApisBySource(serviceId, SOURCE)) {
-            existing.put(key(row.method(), row.path()), row);
+            live.put(key(row.method(), row.path()), row);
         }
+        // Intake-owned set: code-sync defers entirely on these keys.
         Set<String> intakeOwned = new HashSet<>();
         for (ApiSummary row : relationships.findApisBySource(serviceId, "intake")) {
             intakeOwned.add(key(row.method(), row.path()));
@@ -192,27 +220,32 @@ public class CodeSyncCoordinator {
                 skipped++;
                 continue;
             }
-            ApiSummary current = existing.remove(k);
+            ApiSummary current = live.remove(k);
             if (current == null) {
                 relationships.insertApi(serviceId, ep.path(), ep.method(),
                         ep.authMethod(), ep.description(), SOURCE);
                 created++;
             } else if (changed(current, ep)) {
-                relationships.updateApi(current.id(), ep.authMethod(), ep.description());
+                // Append a new observation; carry forward the page_id so the
+                // existing per-endpoint Confluence page keeps being tracked.
+                relationships.insertApi(serviceId, ep.path(), ep.method(),
+                        ep.authMethod(), ep.description(), SOURCE,
+                        "present", current.confluencePageId());
                 updated++;
             }
+            // No-op: live observation matches fresh — append-only avoids
+            // recording sameness.
         }
 
-        // Anything left in `existing` is an openapi row no longer in the spec — delete it.
-        int deleted = existing.size();
-        for (ApiSummary stale : existing.values()) {
-            relationships.deleteApi(stale.id());
+        // Anything left in `live` is an openapi key the spec no longer contains:
+        // append a tombstone, carrying forward the page_id so cleanup can find it.
+        int deleted = live.size();
+        for (ApiSummary stale : live.values()) {
+            relationships.writeApiTombstone(serviceId, stale.method(), stale.path(),
+                    SOURCE, stale.confluencePageId());
         }
 
-        // Audit a single row summarising the refresh — the change-detail tally lives in
-        // the response, not in the audit summary, to keep the audit table compact.
-        // Skipped endpoints don't count as a mutation, so a refresh that only skips is
-        // effectively a no-op and produces no audit row.
+        // Audit: only when something was actually written.
         if (created + updated + deleted > 0) {
             relationships.insertServiceChange(serviceId, CHANGED_BY, "updated",
                     "OpenAPI refresh: created=" + created

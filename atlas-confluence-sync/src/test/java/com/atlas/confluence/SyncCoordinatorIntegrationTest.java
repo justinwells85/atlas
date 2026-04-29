@@ -486,7 +486,7 @@ class SyncCoordinatorIntegrationTest {
     }
 
     @Test
-    void whenApiIsSoftDeleted_thenSyncCleansUpItsConfluencePageAndNullsTheId() {
+    void whenApiIsTombstoned_thenSyncCleansUpItsConfluencePageAndNullsTheId() {
         wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
                 .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
         stubLandingPageExists();
@@ -494,12 +494,13 @@ class SyncCoordinatorIntegrationTest {
                 .willReturn(okJson("{\"id\":\"NEW_SVC_PAGE\"}")));
 
         Service s = createService("orphan-endpoint-svc");
-        java.util.UUID apiId = relationships.insertApi(s.getId(), "/v1/legacy", "GET",
+        java.util.UUID liveId = relationships.insertApi(s.getId(), "/v1/legacy", "GET",
                 null, "Legacy", "openapi");
-        relationships.setApiConfluencePageId(apiId, "DOOMED_EP");
+        relationships.setApiConfluencePageId(liveId, "DOOMED_EP");
 
-        // Soft-delete the api (mirrors what code-sync does when the spec drops it).
-        relationships.deleteApi(apiId);
+        // Append a tombstone (mirrors what code-sync does when the spec drops the endpoint).
+        java.util.UUID tombstoneId = relationships.writeApiTombstone(s.getId(),
+                "GET", "/v1/legacy", "openapi", "DOOMED_EP");
 
         wireMock.stubFor(delete(urlPathEqualTo("/api/v2/pages/DOOMED_EP"))
                 .willReturn(aResponse().withStatus(204)));
@@ -507,11 +508,17 @@ class SyncCoordinatorIntegrationTest {
         coordinator.syncAll();
 
         wireMock.verify(deleteRequestedFor(urlPathEqualTo("/api/v2/pages/DOOMED_EP")));
+        // The tombstone's confluence_page_id has been nulled by the cleanup.
         Long count = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM apis WHERE id = ? AND deleted_at IS NOT NULL " +
+                "SELECT COUNT(*) FROM apis WHERE id = ? AND presence = 'absent' " +
                         "AND confluence_page_id IS NULL",
-                Long.class, apiId);
+                Long.class, tombstoneId);
         assertThat(count).isEqualTo(1L);
+        // The original live row is still present, untouched (append-only).
+        Long liveStillThere = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM apis WHERE id = ?",
+                Long.class, liveId);
+        assertThat(liveStillThere).isEqualTo(1L);
 
         // Re-running sync is a no-op on this api row (idempotent).
         wireMock.resetRequests();
@@ -520,7 +527,7 @@ class SyncCoordinatorIntegrationTest {
     }
 
     @Test
-    void whenCleanupHits404OnAlreadyDeletedApiPage_thenStillNullsOutPageId() {
+    void whenCleanupHits404OnAlreadyDeletedEndpointPage_thenStillNullsOutPageIdOnTombstone() {
         wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
                 .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
         stubLandingPageExists();
@@ -528,10 +535,11 @@ class SyncCoordinatorIntegrationTest {
                 .willReturn(okJson("{\"id\":\"NEW_SVC_PAGE\"}")));
 
         Service s = createService("ghost-endpoint-svc");
-        java.util.UUID apiId = relationships.insertApi(s.getId(), "/v1/x", "GET",
+        java.util.UUID liveId = relationships.insertApi(s.getId(), "/v1/x", "GET",
                 null, "x", "openapi");
-        relationships.setApiConfluencePageId(apiId, "GHOST_EP");
-        relationships.deleteApi(apiId);
+        relationships.setApiConfluencePageId(liveId, "GHOST_EP");
+        java.util.UUID tombstoneId = relationships.writeApiTombstone(s.getId(),
+                "GET", "/v1/x", "openapi", "GHOST_EP");
 
         wireMock.stubFor(delete(urlPathEqualTo("/api/v2/pages/GHOST_EP"))
                 .willReturn(aResponse().withStatus(404)));
@@ -540,30 +548,34 @@ class SyncCoordinatorIntegrationTest {
 
         Long count = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM apis WHERE id = ? AND confluence_page_id IS NULL",
-                Long.class, apiId);
+                Long.class, tombstoneId);
         assertThat(count).isEqualTo(1L);
     }
 
     @Test
-    void whenApiIsSoftDeleted_thenItIsHiddenFromFindApisForButRowSurvivesInDb() {
+    void whenApiHasTombstoneAsLatestObservation_thenItIsHiddenFromLiveViewButRowsSurvive() {
         Service s = createService("hidden-svc");
         java.util.UUID liveId = relationships.insertApi(s.getId(), "/v1/live", "GET",
                 null, "live", "intake");
         java.util.UUID deadId = relationships.insertApi(s.getId(), "/v1/dead", "GET",
                 null, "dead", "openapi");
 
-        relationships.deleteApi(deadId);
+        java.util.UUID tombstoneId = relationships.writeApiTombstone(s.getId(),
+                "GET", "/v1/dead", "openapi", null);
 
         // Hidden from the live-only read (used by renderer + MCP).
         java.util.List<ApiSummary> live = relationships.findApisFor(s.getId());
         assertThat(live).extracting(ApiSummary::id).containsExactly(liveId);
 
-        // But the row is still in the DB — soft-delete, not hard-delete — so the
-        // sync coordinator's cleanup pass can find and delete its Confluence page.
-        Long total = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM apis WHERE id = ? AND deleted_at IS NOT NULL",
-                Long.class, deadId);
-        assertThat(total).isEqualTo(1L);
+        // Both observations survive in the table — the original "present"
+        // observation and the tombstone are immutable history.
+        Long deadCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM apis WHERE id = ?", Long.class, deadId);
+        Long tombstoneCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM apis WHERE id = ? AND presence = 'absent'",
+                Long.class, tombstoneId);
+        assertThat(deadCount).isEqualTo(1L);
+        assertThat(tombstoneCount).isEqualTo(1L);
     }
 
     @Test

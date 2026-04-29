@@ -27,53 +27,56 @@ public class ServiceRelationshipsRepository {
     // --- Writes (Phase 3.5) -------------------------------------------------
 
     /**
-     * Insert one row in {@code apis} with explicit provenance. Returns the generated id.
-     * {@code source} must be one of {@code intake}, {@code openapi}, {@code pom-xml}, {@code tests}
-     * (CHECK-constrained at the DB layer per V13).
+     * Insert one observation in {@code apis} (M3.5: append-only ingestion).
+     * {@code source} must be one of {@code intake}, {@code openapi},
+     * {@code pom-xml}, {@code tests} (CHECK-constrained at the DB layer per V13).
+     * {@code presence} is {@code 'present'} for normal observations or
+     * {@code 'absent'} for tombstones recording disappearance.
+     * {@code observed_at} defaults to now.
      */
     public UUID insertApi(UUID serviceId, String path, String method,
-                          String authMethod, String description, String source) {
+                          String authMethod, String description, String source,
+                          String presence, String confluencePageId) {
         UUID id = UUID.randomUUID();
         jdbc.update(
-                "INSERT INTO apis (id, service_id, path, method, auth_method, description, source) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                id, serviceId, path, method, authMethod, description, source);
+                "INSERT INTO apis (id, service_id, path, method, auth_method, description, source, presence, confluence_page_id) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                id, serviceId, path, method, authMethod, description, source, presence, confluencePageId);
         return id;
     }
 
-    /** Update mutable fields of an existing API row (auth_method, description). Used by code-sync upserts. */
-    public void updateApi(UUID apiId, String authMethod, String description) {
-        jdbc.update(
-                "UPDATE apis SET auth_method = ?, description = ?, updated_at = CURRENT_TIMESTAMP " +
-                        "WHERE id = ?",
-                authMethod, description, apiId);
+    /**
+     * Convenience overload for the common "live observation, no page id yet" case.
+     * Equivalent to {@link #insertApi(UUID, String, String, String, String, String, String, String)}
+     * with {@code presence='present'} and {@code confluencePageId=null}.
+     */
+    public UUID insertApi(UUID serviceId, String path, String method,
+                          String authMethod, String description, String source) {
+        return insertApi(serviceId, path, method, authMethod, description, source, "present", null);
     }
 
     /**
-     * Soft-delete one API row by id. Stamps {@code deleted_at} so the sync
-     * coordinator's cleanup pass can find the row, delete its Confluence
-     * page, and null the page id (V15 / M2.5). Live reads filter to
-     * {@code deleted_at IS NULL}, so the row is invisible to renderers and
-     * MCP after this call.
+     * Append a tombstone observation recording that a {@code (method, path, source)}
+     * triple is no longer present in its upstream artifact (M3.5). The
+     * {@code confluencePageId} is carried forward from the previous live row
+     * so the sync coordinator's cleanup pass can find and delete the page,
+     * then null the field on the tombstone (mutable bookkeeping).
      */
-    public void deleteApi(UUID apiId) {
-        jdbc.update("UPDATE apis SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", apiId);
+    public UUID writeApiTombstone(UUID serviceId, String method, String path,
+                                  String source, String confluencePageId) {
+        return insertApi(serviceId, path, method, null, null, source, "absent", confluencePageId);
     }
 
-    /** Find APIs of a given provenance for one service. Filters soft-deleted rows. */
+    /**
+     * Live view: latest observation per {@code (service_id, method, path, source)}
+     * for the service, filtered to {@code presence='present'}. Used by the
+     * renderer and MCP. Tombstones and superseded observations are excluded.
+     */
     public List<ApiSummary> findApisBySource(UUID serviceId, String source) {
         return jdbc.query(
-                "SELECT id, path, method, auth_method, description, source, confluence_page_id " +
-                        "FROM apis WHERE service_id = ? AND source = ? AND deleted_at IS NULL " +
-                        "ORDER BY path, method",
-                (rs, i) -> new ApiSummary(
-                        (UUID) rs.getObject("id"),
-                        rs.getString("path"),
-                        rs.getString("method"),
-                        rs.getString("auth_method"),
-                        rs.getString("description"),
-                        rs.getString("source"),
-                        rs.getString("confluence_page_id")),
+                liveApisSql() + " AND a.service_id = ? AND a.source = ? " +
+                        "ORDER BY a.path, a.method",
+                (rs, i) -> mapApi(rs),
                 serviceId, source);
     }
 
@@ -85,22 +88,28 @@ public class ServiceRelationshipsRepository {
     }
 
     /**
-     * Soft-deleted api rows whose Confluence pages still need to be removed —
-     * fed to the sync coordinator's cleanup pass. Bypasses the live-only
-     * filter that other reads use. Joins to services so the cleanup can log
-     * a meaningful service name; only includes apis whose service is itself
-     * still live (a soft-deleted service is handled by cleanupDeletedServices).
+     * Tombstone rows whose Confluence pages still need to be removed: latest
+     * observation per key is {@code presence='absent'} and carries a non-null
+     * {@code confluence_page_id}. Bypasses the live-only filter. Only includes
+     * tombstones whose owning service is itself still live (soft-deleted
+     * services are handled by {@code cleanupDeletedServices}).
      */
-    public List<SoftDeletedApiPage> findSoftDeletedApisWithConfluencePage() {
+    public List<SoftDeletedApiPage> findStaleApiPages() {
         return jdbc.query(
-                "SELECT a.id, a.method, a.path, a.confluence_page_id, " +
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, method, path, source, presence, confluence_page_id, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, method, path, source " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM apis " +
+                        ") " +
+                        "SELECT l.id, l.method, l.path, l.confluence_page_id, " +
                         "       s.id AS service_id, s.name AS service_name " +
-                        "FROM apis a " +
-                        "JOIN services s ON s.id = a.service_id " +
-                        "WHERE a.deleted_at IS NOT NULL " +
-                        "  AND a.confluence_page_id IS NOT NULL " +
+                        "FROM latest l " +
+                        "JOIN services s ON s.id = l.service_id " +
+                        "WHERE l.rn = 1 AND l.presence = 'absent' " +
+                        "  AND l.confluence_page_id IS NOT NULL " +
                         "  AND s.deleted_at IS NULL " +
-                        "ORDER BY s.name, a.method, a.path",
+                        "ORDER BY s.name, l.method, l.path",
                 (rs, i) -> new SoftDeletedApiPage(
                         (UUID) rs.getObject("id"),
                         rs.getString("method"),
@@ -115,13 +124,53 @@ public class ServiceRelationshipsRepository {
         jdbc.update("UPDATE apis SET confluence_page_id = NULL WHERE id = ?", apiId);
     }
 
-    // --- service_test_scenarios (M3) ---------------------------------------
+    /**
+     * SELECT clause + base FROM/WHERE for the apis live-view: latest
+     * observation per {@code (service_id, method, path, source)} where
+     * {@code presence='present'}. Append additional filters with {@code AND ...}
+     * and an {@code ORDER BY} clause as needed.
+     */
+    private static String liveApisSql() {
+        return "WITH latest AS (" +
+                "  SELECT id, service_id, path, method, auth_method, description, source, " +
+                "         presence, confluence_page_id, " +
+                "         ROW_NUMBER() OVER (PARTITION BY service_id, method, path, source " +
+                "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                "  FROM apis " +
+                ") " +
+                "SELECT id, path, method, auth_method, description, source, confluence_page_id " +
+                "FROM latest a " +
+                "WHERE a.rn = 1 AND a.presence = 'present'";
+    }
 
-    /** All test scenarios for one service, ordered by package, class, method. */
+    private static ApiSummary mapApi(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new ApiSummary(
+                (UUID) rs.getObject("id"),
+                rs.getString("path"),
+                rs.getString("method"),
+                rs.getString("auth_method"),
+                rs.getString("description"),
+                rs.getString("source"),
+                rs.getString("confluence_page_id"));
+    }
+
+    // --- service_test_scenarios (M3, append-only as of M3.5) -------------
+
+    /**
+     * Live view: latest observation per
+     * {@code (service_id, package_name, class_name, method_name)} where
+     * {@code presence='present'}. Used by the renderer.
+     */
     public List<TestScenario> findTestScenariosFor(UUID serviceId) {
         return jdbc.query(
-                "SELECT id, service_id, package_name, class_name, method_name, source " +
-                        "FROM service_test_scenarios WHERE service_id = ? " +
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, package_name, class_name, method_name, source, presence, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, package_name, class_name, method_name " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM service_test_scenarios " +
+                        ") " +
+                        "SELECT id, service_id, package_name, class_name, method_name, source " +
+                        "FROM latest WHERE rn = 1 AND presence = 'present' AND service_id = ? " +
                         "ORDER BY package_name, class_name, method_name",
                 (rs, i) -> new TestScenario(
                         (UUID) rs.getObject("id"),
@@ -133,21 +182,32 @@ public class ServiceRelationshipsRepository {
                 serviceId);
     }
 
-    /** Insert one test scenario row. Returns the generated id. */
+    /**
+     * Append one test-scenario observation. Defaults to {@code presence='present'}.
+     * Append a tombstone via {@link #writeTestScenarioTombstone}.
+     */
     public UUID insertTestScenario(UUID serviceId, String packageName,
                                    String className, String methodName, String source) {
+        return insertTestScenario(serviceId, packageName, className, methodName, source, "present");
+    }
+
+    public UUID insertTestScenario(UUID serviceId, String packageName,
+                                   String className, String methodName, String source,
+                                   String presence) {
         UUID id = UUID.randomUUID();
         jdbc.update(
-                "INSERT INTO service_test_scenarios (id, service_id, package_name, class_name, method_name, source) " +
-                        "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO service_test_scenarios " +
+                        "(id, service_id, package_name, class_name, method_name, source, presence) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 id, serviceId, packageName == null ? "" : packageName,
-                className, methodName, source);
+                className, methodName, source, presence);
         return id;
     }
 
-    /** Hard-delete one scenario by id. Used by code-sync to remove rows no longer present in the test source. */
-    public void deleteTestScenario(UUID scenarioId) {
-        jdbc.update("DELETE FROM service_test_scenarios WHERE id = ?", scenarioId);
+    /** Append a {@code presence='absent'} tombstone for a removed test method. */
+    public UUID writeTestScenarioTombstone(UUID serviceId, String packageName,
+                                           String className, String methodName, String source) {
+        return insertTestScenario(serviceId, packageName, className, methodName, source, "absent");
     }
 
     /** Update services.tests_page_id after the sync coordinator creates the per-service tests page. */
@@ -250,16 +310,8 @@ public class ServiceRelationshipsRepository {
 
     public List<ApiSummary> findApisFor(UUID serviceId) {
         return jdbc.query(
-                "SELECT id, path, method, auth_method, description, source, confluence_page_id " +
-                        "FROM apis WHERE service_id = ? AND deleted_at IS NULL ORDER BY path, method",
-                (rs, i) -> new ApiSummary(
-                        (UUID) rs.getObject("id"),
-                        rs.getString("path"),
-                        rs.getString("method"),
-                        rs.getString("auth_method"),
-                        rs.getString("description"),
-                        rs.getString("source"),
-                        rs.getString("confluence_page_id")),
+                liveApisSql() + " AND a.service_id = ? ORDER BY a.path, a.method",
+                (rs, i) -> mapApi(rs),
                 serviceId);
     }
 

@@ -55,16 +55,24 @@ class EntityTablesSchemaTest {
     }
 
     @Test
-    void whenApiDuplicatesServicePathMethod_thenUniqueViolationIsRaised() {
+    void whenApiDuplicatesServicePathMethod_thenSecondInsertSucceedsAsAdditionalObservation() {
+        // V17/V18 (M3.5) switched apis to append-only ingestion. Multiple
+        // observations of the same (service_id, method, path) are allowed —
+        // distinguished by observed_at and presence. The renderer + MCP read
+        // through a "latest per key" view; history accumulates by design.
         UUID serviceId = insertService("svc-dup-api");
         jdbcTemplate.update(
                 "INSERT INTO apis (id, service_id, path, method) VALUES (?, ?, ?, ?)",
                 UUID.randomUUID(), serviceId, "/v1/dupes", "POST");
 
-        assertThatThrownBy(() -> jdbcTemplate.update(
+        jdbcTemplate.update(
                 "INSERT INTO apis (id, service_id, path, method) VALUES (?, ?, ?, ?)",
-                UUID.randomUUID(), serviceId, "/v1/dupes", "POST"))
-                .isInstanceOf(DataIntegrityViolationException.class);
+                UUID.randomUUID(), serviceId, "/v1/dupes", "POST");
+
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM apis WHERE service_id = ? AND method = 'POST' AND path = '/v1/dupes'",
+                Long.class, serviceId);
+        assertThat(count).isEqualTo(2L);
     }
 
     @Test

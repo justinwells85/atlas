@@ -142,21 +142,24 @@ public class SyncCoordinator {
     }
 
     /**
-     * Find every soft-deleted api row whose Confluence page still exists,
-     * delete the page, and null out {@code apis.confluence_page_id}. Mirrors
-     * {@link #cleanupDeletedServices()} at the endpoint grain (M2.5). 404 on
-     * the page is treated as success — already gone. Per-api errors are
-     * logged and skipped so one stuck endpoint doesn't block siblings.
+     * Find every "stale" endpoint page — a tombstone (presence='absent') that
+     * is the latest observation for its key and still carries a non-null
+     * {@code confluence_page_id}. Delete the page in Confluence and null
+     * the bookkeeping field on the tombstone. (Mutating the tombstone's
+     * {@code confluence_page_id} is allowed because the page id is bookkeeping,
+     * not observed artifact data; the immutable observation itself is the
+     * fact "this endpoint was absent at observed_at".) Mirrors
+     * {@link #cleanupDeletedServices()} at the endpoint grain. M2.5 + M3.5.
      */
     private void cleanupDeletedApiPages() {
-        List<SoftDeletedApiPage> orphans = relationships.findSoftDeletedApisWithConfluencePage();
+        List<SoftDeletedApiPage> orphans = relationships.findStaleApiPages();
         for (SoftDeletedApiPage orphan : orphans) {
             try {
                 // ConfluenceClient.deletePage swallows 404 (page already gone)
                 // so this is the "succeeded" path for both 204 and 404.
                 confluenceClient.deletePage(orphan.confluencePageId());
                 relationships.clearApiConfluencePageId(orphan.apiId());
-                log.info("Cleaned up endpoint page {} for soft-deleted api {} {} on service {}",
+                log.info("Cleaned up endpoint page {} for tombstoned api {} {} on service {}",
                         orphan.confluencePageId(), orphan.method(), orphan.path(), orphan.serviceName());
             } catch (Exception e) {
                 log.warn("Cleanup of endpoint page {} for {} {} on {} failed: {}",
