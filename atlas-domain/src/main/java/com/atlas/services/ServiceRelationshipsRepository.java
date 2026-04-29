@@ -49,16 +49,22 @@ public class ServiceRelationshipsRepository {
                 authMethod, description, apiId);
     }
 
-    /** Delete one API row by id. Used by code-sync to clean up endpoints removed from the spec. */
+    /**
+     * Soft-delete one API row by id. Stamps {@code deleted_at} so the sync
+     * coordinator's cleanup pass can find the row, delete its Confluence
+     * page, and null the page id (V15 / M2.5). Live reads filter to
+     * {@code deleted_at IS NULL}, so the row is invisible to renderers and
+     * MCP after this call.
+     */
     public void deleteApi(UUID apiId) {
-        jdbc.update("DELETE FROM apis WHERE id = ?", apiId);
+        jdbc.update("UPDATE apis SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", apiId);
     }
 
-    /** Find APIs of a given provenance for one service. Used by code-sync upsert logic. */
+    /** Find APIs of a given provenance for one service. Filters soft-deleted rows. */
     public List<ApiSummary> findApisBySource(UUID serviceId, String source) {
         return jdbc.query(
                 "SELECT id, path, method, auth_method, description, source, confluence_page_id " +
-                        "FROM apis WHERE service_id = ? AND source = ? " +
+                        "FROM apis WHERE service_id = ? AND source = ? AND deleted_at IS NULL " +
                         "ORDER BY path, method",
                 (rs, i) -> new ApiSummary(
                         (UUID) rs.getObject("id"),
@@ -76,6 +82,37 @@ public class ServiceRelationshipsRepository {
         jdbc.update(
                 "UPDATE apis SET confluence_page_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 confluencePageId, apiId);
+    }
+
+    /**
+     * Soft-deleted api rows whose Confluence pages still need to be removed —
+     * fed to the sync coordinator's cleanup pass. Bypasses the live-only
+     * filter that other reads use. Joins to services so the cleanup can log
+     * a meaningful service name; only includes apis whose service is itself
+     * still live (a soft-deleted service is handled by cleanupDeletedServices).
+     */
+    public List<SoftDeletedApiPage> findSoftDeletedApisWithConfluencePage() {
+        return jdbc.query(
+                "SELECT a.id, a.method, a.path, a.confluence_page_id, " +
+                        "       s.id AS service_id, s.name AS service_name " +
+                        "FROM apis a " +
+                        "JOIN services s ON s.id = a.service_id " +
+                        "WHERE a.deleted_at IS NOT NULL " +
+                        "  AND a.confluence_page_id IS NOT NULL " +
+                        "  AND s.deleted_at IS NULL " +
+                        "ORDER BY s.name, a.method, a.path",
+                (rs, i) -> new SoftDeletedApiPage(
+                        (UUID) rs.getObject("id"),
+                        rs.getString("method"),
+                        rs.getString("path"),
+                        rs.getString("confluence_page_id"),
+                        (UUID) rs.getObject("service_id"),
+                        rs.getString("service_name")));
+    }
+
+    /** Null an api row's confluence_page_id. Used by the cleanup pass after the page is gone in Confluence. */
+    public void clearApiConfluencePageId(UUID apiId) {
+        jdbc.update("UPDATE apis SET confluence_page_id = NULL WHERE id = ?", apiId);
     }
 
     /** Insert one row in {@code api_consumers} linking an API to a consumer service. */
@@ -172,7 +209,7 @@ public class ServiceRelationshipsRepository {
     public List<ApiSummary> findApisFor(UUID serviceId) {
         return jdbc.query(
                 "SELECT id, path, method, auth_method, description, source, confluence_page_id " +
-                        "FROM apis WHERE service_id = ? ORDER BY path, method",
+                        "FROM apis WHERE service_id = ? AND deleted_at IS NULL ORDER BY path, method",
                 (rs, i) -> new ApiSummary(
                         (UUID) rs.getObject("id"),
                         rs.getString("path"),

@@ -84,6 +84,19 @@ Code-sync responsibilities **fold into `atlas-intake` initially** rather than sp
 
 **Reflection at M2 boundary.**
 
+### M2.5 — Orphan-page cleanup for per-endpoint pages (carry-over from M2)
+
+**Goal**: when code-sync drops an api row, its Confluence page disappears on the next sync — same shape as ADR-014 for services.
+
+1. V15 migration: `apis.deleted_at TIMESTAMP NULL` + index.
+2. `ServiceRelationshipsRepository`: existing reads filter to `deleted_at IS NULL`; `deleteApi(apiId)` rewrites to `UPDATE apis SET deleted_at = CURRENT_TIMESTAMP`. New: `findSoftDeletedApisWithConfluencePage()`, `clearApiConfluencePageId(apiId)`.
+3. `SyncCoordinator.cleanupDeletedApiPages()` runs at the start of `syncAll()` (parallel to `cleanupDeletedServices()`): delete each page, null the id, log per-api errors.
+4. Tests:
+   - Cleanup deletes the Confluence page and nulls the api row's `confluence_page_id`
+   - 404 on already-deleted page is treated as success
+   - Soft-deleted api rows are invisible to the renderer via `findApisFor`
+5. Known limitation: the unique constraint on `(service_id, method, path)` still fires on re-insert against a soft-deleted row. Acceptable at prototype scale; production fix is either a partial unique index (Postgres-only) or a reactivate-on-collision pattern in code-sync (mirrors ADR-014's intake reactivate). Documented in the V15 migration comment and called out here.
+
 ### M3 — Test-method extraction → "What this service guarantees" page
 
 **Goal**: tests as living spec, surfaced as a Confluence page per service.
@@ -148,6 +161,7 @@ Decision point at end of M3: code-sync responsibilities are now substantial — 
 - 2026-04-29 — plan committed.
 - 2026-04-29 — M1 closed.
 - 2026-04-29 — M2 closed (create + update; orphan cleanup deferred per scope decision).
+- 2026-04-29 — M2.5 closed (orphan cleanup via soft-delete + cleanup pass, mirroring ADR-014).
 
 ## Reflections
 
@@ -191,3 +205,21 @@ Branch `main` at commit pending — this commit lands M1 of the code-driven-docu
 **Resumable summary** *(propagated to `docs/handoff/current-state.md`)*
 
 Branch `main` at commit pending — this commit lands M2 of the code-driven-documentation plan. 183 tests pass across four modules (atlas-domain 33, atlas-intake 50, atlas-mcp 24, atlas-confluence-sync 76). New: V14 migration adds `apis.confluence_page_id`; `ApiEndpointPageRenderer` + `ApiEndpointPageContext` in `atlas-confluence-sync`; `SyncCoordinator.syncEndpointPages` creates/updates per-endpoint pages parented under the service page (with 404-fallback to recreate); `ServicePageRenderer` linkifies APIs section to per-endpoint pages when URL is known; `ApiPresentation` gained `endpointPageUrl`; `@Operation` annotations on atlas-intake's controllers (M1 carry-over). Live: spec at `/v3/api-docs` now carries real summaries; code-sync re-run updated 3 openapi rows with populated descriptions. Sync-side live-verify against real Confluence deferred. Next milestone: M3 — test-method extraction. Open carry-overs: orphan cleanup for endpoint pages (M2.5 candidate); stale `/api/smoke/anthropic` intake row in dogfood DB; code-sync still inside `atlas-intake` (decision point at end of M3).
+
+### M2.5 — Orphan-page cleanup for per-endpoint pages
+
+**What's working**
+
+- **The ADR-014 pattern composed cleanly at the endpoint grain.** `apis.deleted_at` (V15), filter on read, soft-delete on write, cleanup pass on `syncAll()`. The new `SyncCoordinator.cleanupDeletedApiPages()` is the per-endpoint twin of `cleanupDeletedServices()` and reads almost identically — readers can pattern-match between them.
+- **Existing tests stayed green for the right reasons.** The CodeSyncCoordinator's "endpoint removed from spec" test now exercises soft-delete instead of hard-delete and still asserts the same behaviour (live row count drops by one) because `findApisFor` filters. ADR-006's "test the public behaviour, not the internals" rule paid off — the implementation flipped under the test, not the test under the implementation.
+- **`ConfluenceClient.deletePage` already swallows 404.** `cleanupDeletedApiPages` didn't need any 404-special-casing — the 404 path and the success path collapse to the same line. Less code than the equivalent service-level cleanup, which predates that change.
+
+**What's not — and what to do about it**
+
+- **The unique constraint on `(service_id, method, path)` still applies across soft-deleted rows.** If code-sync drops `/v1/foo` and the spec re-adds it before the next syncAll cleans up, the re-insert fails. Documented inline in the V15 migration and in the M2.5 plan steps. Fix is either a partial unique index (Postgres-only, breaks portability) or an intake-style reactivate-on-collision in `CodeSyncCoordinator`. Worth keeping in mind but not blocking — the failure mode is loud (constraint violation) and the workaround is "wait for the next syncAll". Capture as an explicit known-issue if production prep ever needs it.
+- **The strengthened "hidden from findApisFor" test caught a passes-for-wrong-reason failure mode.** First version of that test passed under hard-delete because the row was simply gone. Adding the "row still in DB" assertion was the difference between testing what the code *does* vs what the user *wants*. Worth being more skeptical of pass-on-first-run tests in future milestones — the most useful tests are ones that change colour when the implementation flips.
+- **Repository surface is growing.** Three new methods on `ServiceRelationshipsRepository` for M2.5 alone (deleteApi semantics changed, `findSoftDeletedApisWithConfluencePage`, `clearApiConfluencePageId`). The class is approaching 350 lines. M3 will add more; worth thinking about whether to split apis-specific reads into their own repository class as part of M3's "code-sync grew, time to split into atlas-code-sync" decision.
+
+**Resumable summary** *(propagated to `docs/handoff/current-state.md`)*
+
+Branch `main` at commit pending — this commit lands M2.5 of the code-driven-documentation plan. 186 tests pass across four modules (atlas-domain 33, atlas-intake 50, atlas-mcp 24, atlas-confluence-sync 79). V15 migration adds `apis.deleted_at`; `ServiceRelationshipsRepository.deleteApi` now soft-deletes and live reads filter to `deleted_at IS NULL`; new `findSoftDeletedApisWithConfluencePage` + `clearApiConfluencePageId` feed `SyncCoordinator.cleanupDeletedApiPages()`, which runs at the start of `syncAll()` parallel to `cleanupDeletedServices()`. New `SoftDeletedApiPage` record in `atlas-domain`. The cleanup is idempotent and 404-tolerant. Known limitation: the unique constraint on `(service_id, method, path)` still applies to soft-deleted rows, so re-inserting a recently-removed endpoint fails until the next `syncAll` cleanup or until reactivate-on-collision lands. Next milestone: M3 — test-method extraction. Open carry-overs: stale `/api/smoke/anthropic` intake row in dogfood DB (M5 cleanup); code-sync still inside `atlas-intake` (decision point at end of M3); reactivate-on-collision for re-added endpoints (production-readiness item).

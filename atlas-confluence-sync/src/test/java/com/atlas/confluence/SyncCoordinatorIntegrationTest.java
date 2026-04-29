@@ -485,6 +485,87 @@ class SyncCoordinatorIntegrationTest {
         assertThat(refreshed.confluencePageId()).isEqualTo("EP_FRESH");
     }
 
+    @Test
+    void whenApiIsSoftDeleted_thenSyncCleansUpItsConfluencePageAndNullsTheId() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .willReturn(okJson("{\"id\":\"NEW_SVC_PAGE\"}")));
+
+        Service s = createService("orphan-endpoint-svc");
+        java.util.UUID apiId = relationships.insertApi(s.getId(), "/v1/legacy", "GET",
+                null, "Legacy", "openapi");
+        relationships.setApiConfluencePageId(apiId, "DOOMED_EP");
+
+        // Soft-delete the api (mirrors what code-sync does when the spec drops it).
+        relationships.deleteApi(apiId);
+
+        wireMock.stubFor(delete(urlPathEqualTo("/api/v2/pages/DOOMED_EP"))
+                .willReturn(aResponse().withStatus(204)));
+
+        coordinator.syncAll();
+
+        wireMock.verify(deleteRequestedFor(urlPathEqualTo("/api/v2/pages/DOOMED_EP")));
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM apis WHERE id = ? AND deleted_at IS NOT NULL " +
+                        "AND confluence_page_id IS NULL",
+                Long.class, apiId);
+        assertThat(count).isEqualTo(1L);
+
+        // Re-running sync is a no-op on this api row (idempotent).
+        wireMock.resetRequests();
+        coordinator.syncAll();
+        wireMock.verify(0, deleteRequestedFor(urlPathEqualTo("/api/v2/pages/DOOMED_EP")));
+    }
+
+    @Test
+    void whenCleanupHits404OnAlreadyDeletedApiPage_thenStillNullsOutPageId() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .willReturn(okJson("{\"id\":\"NEW_SVC_PAGE\"}")));
+
+        Service s = createService("ghost-endpoint-svc");
+        java.util.UUID apiId = relationships.insertApi(s.getId(), "/v1/x", "GET",
+                null, "x", "openapi");
+        relationships.setApiConfluencePageId(apiId, "GHOST_EP");
+        relationships.deleteApi(apiId);
+
+        wireMock.stubFor(delete(urlPathEqualTo("/api/v2/pages/GHOST_EP"))
+                .willReturn(aResponse().withStatus(404)));
+
+        coordinator.syncAll();
+
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM apis WHERE id = ? AND confluence_page_id IS NULL",
+                Long.class, apiId);
+        assertThat(count).isEqualTo(1L);
+    }
+
+    @Test
+    void whenApiIsSoftDeleted_thenItIsHiddenFromFindApisForButRowSurvivesInDb() {
+        Service s = createService("hidden-svc");
+        java.util.UUID liveId = relationships.insertApi(s.getId(), "/v1/live", "GET",
+                null, "live", "intake");
+        java.util.UUID deadId = relationships.insertApi(s.getId(), "/v1/dead", "GET",
+                null, "dead", "openapi");
+
+        relationships.deleteApi(deadId);
+
+        // Hidden from the live-only read (used by renderer + MCP).
+        java.util.List<ApiSummary> live = relationships.findApisFor(s.getId());
+        assertThat(live).extracting(ApiSummary::id).containsExactly(liveId);
+
+        // But the row is still in the DB — soft-delete, not hard-delete — so the
+        // sync coordinator's cleanup pass can find and delete its Confluence page.
+        Long total = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM apis WHERE id = ? AND deleted_at IS NOT NULL",
+                Long.class, deadId);
+        assertThat(total).isEqualTo(1L);
+    }
+
     private Service createService(String name) {
         Service s = new Service();
         s.setName(name);

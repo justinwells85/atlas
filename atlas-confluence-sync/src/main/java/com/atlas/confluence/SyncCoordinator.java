@@ -9,6 +9,7 @@ import com.atlas.services.Service;
 import com.atlas.services.ServiceDependencyEdge;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
+import com.atlas.services.SoftDeletedApiPage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -106,6 +107,7 @@ public class SyncCoordinator {
         // need their Confluence pages removed. Independent of the active
         // service list — runs even when there are no live services.
         cleanupDeletedServices();
+        cleanupDeletedApiPages();
 
         List<Service> services = serviceRepository.findAll();
         if (services.isEmpty()) {
@@ -133,6 +135,31 @@ public class SyncCoordinator {
 
         refreshWellKnownPages(pages, services, servicePageUrls);
         return new SyncResult(successes, failures.size(), failures);
+    }
+
+    /**
+     * Find every soft-deleted api row whose Confluence page still exists,
+     * delete the page, and null out {@code apis.confluence_page_id}. Mirrors
+     * {@link #cleanupDeletedServices()} at the endpoint grain (M2.5). 404 on
+     * the page is treated as success — already gone. Per-api errors are
+     * logged and skipped so one stuck endpoint doesn't block siblings.
+     */
+    private void cleanupDeletedApiPages() {
+        List<SoftDeletedApiPage> orphans = relationships.findSoftDeletedApisWithConfluencePage();
+        for (SoftDeletedApiPage orphan : orphans) {
+            try {
+                // ConfluenceClient.deletePage swallows 404 (page already gone)
+                // so this is the "succeeded" path for both 204 and 404.
+                confluenceClient.deletePage(orphan.confluencePageId());
+                relationships.clearApiConfluencePageId(orphan.apiId());
+                log.info("Cleaned up endpoint page {} for soft-deleted api {} {} on service {}",
+                        orphan.confluencePageId(), orphan.method(), orphan.path(), orphan.serviceName());
+            } catch (Exception e) {
+                log.warn("Cleanup of endpoint page {} for {} {} on {} failed: {}",
+                        orphan.confluencePageId(), orphan.method(), orphan.path(),
+                        orphan.serviceName(), e.getMessage());
+            }
+        }
     }
 
     /**
