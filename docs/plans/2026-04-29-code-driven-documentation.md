@@ -30,6 +30,8 @@ Shift Atlas from intake-interview as the only data source toward a hybrid model 
 
 Five review milestones. Each is independently reviewable, ends with a reflection (per the new CLAUDE.md guidance), and includes a session-resumable summary so handoff stays current. TDD throughout: tests first (red), minimum impl (green), refactor.
 
+**Discipline reminder (from M1 reflection)**: in M1 the red→green discipline drifted toward writing tests and impl together. From M2 onward, write at least one failing test for each behavior *before* the corresponding impl exists.
+
 Code-sync responsibilities **fold into `atlas-intake` initially** rather than spawning a fourth Spring Boot module. Splits to its own module if and when M3+ adds enough surface to justify it. Recorded as a judgment call to revisit at M3.
 
 ## Milestones
@@ -71,11 +73,12 @@ Code-sync responsibilities **fold into `atlas-intake` initially** rather than sp
 3. Update the service-page renderer's APIs section: each row becomes a hyperlink to the per-endpoint page, with `source` badge in the table.
 4. Per-endpoint page includes a back-link to the service page.
 5. New `confluence_page_id` storage on `apis` table (Flyway `V14`) so endpoint pages are addressable across syncs.
-6. Tests:
-   - Renderer output for endpoint with full schema, minimal schema, no schema
+6. **Carry-over from M1**: springdoc emits null operation descriptions absent `@Operation` annotations on controllers. Decide one of: (a) annotate Atlas's controllers (`IntakeController`, `SmokeController`, `CodeSyncController`) with `@Operation(summary=...)` for dogfood polish — small, ~1 line per method; (b) accept null descriptions and document in the plan's open questions as "production teams annotate their own controllers"; (c) both. Default: (a) for the dogfood since the per-endpoint pages need *something* to render.
+7. Tests:
+   - Renderer output for endpoint with full schema, minimal schema, no schema (incl. null description)
    - Sync orchestration: creates new pages, updates existing, removes orphans
    - Service page links to endpoint pages with correct anchors
-7. Live verification: `atlas-intake`'s endpoints render as separate Confluence pages parented under its service page.
+8. Live verification: `atlas-intake`'s endpoints render as separate Confluence pages parented under its service page.
 
 **Reflection at M2 boundary.**
 
@@ -124,9 +127,10 @@ Decision point at end of M3: code-sync responsibilities are now substantial — 
 1. Count intake-prompted fields at start of phase (today: ~17) vs end of phase. Document delta.
 2. Audit existing intake stages in `InterviewService.java`. For each, decide: kept, removed (now auto-derived), or made-optional (auto-derived but still askable as override).
 3. Implement the interview slimming: remove or make-optional the now-auto-derived stages.
-4. Re-run the dogfood: register a fresh service via the slim interview + a `repo_url` and `openapi_spec_url`, observe code-sync filling in the rest, observe richer Confluence pages than before.
-5. Tests: interview state-machine tests updated; code-sync fills the gap on first sync after intake.
-6. **Phase-level reflection** (per CLAUDE.md §6): are we still on track for the project's stated goals? What's surfaced? Where next — AI-narrated walkthroughs (a layer 3 we deliberately deferred), production-readiness (open DDs), or something else?
+4. **Carry-over from M1**: once intake stops asking about APIs, the existing `source='intake'` rows that overlap a service's OpenAPI spec become migration debt. The dogfood already has a concrete instance — `/api/smoke/anthropic` (intake row) was renamed to `/api/smoke/llm` in code per ADR-013, but intake never updated the row, so code-sync's intake-collision skip can't help. Decide a one-time migration: (a) auto-delete `source='intake'` rows whose `(method, path)` no longer matches any current code-sync result for the same service, with audit `changed_by='m5-intake-shrinkage'`; (b) flag them for human review without auto-deleting; (c) leave them alone and call it intentional "human notes that survive code refactors". Default: (a) — the whole point of the phase is to make the docs not lie.
+5. Re-run the dogfood: register a fresh service via the slim interview + a `repo_url` and `openapi_spec_url`, observe code-sync filling in the rest, observe richer Confluence pages than before. Confirm `/api/smoke/anthropic` is gone from atlas-intake's apis rows.
+6. Tests: interview state-machine tests updated; code-sync fills the gap on first sync after intake; the M5 stale-intake-cleanup migration is exercised against a fixture.
+7. **Phase-level reflection** (per CLAUDE.md §6): are we still on track for the project's stated goals? What's surfaced? Where next — AI-narrated walkthroughs (a layer 3 we deliberately deferred), production-readiness (open DDs), or something else?
 
 **End-of-phase reflection.**
 
