@@ -2,19 +2,23 @@ package com.atlas.codesync;
 
 import com.atlas.services.ApiSummary;
 import com.atlas.services.Service;
+import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
 import com.atlas.services.TestScenario;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -37,6 +41,8 @@ public class CodeSyncCoordinator {
     private static final String CHANGED_BY = "code-sync-openapi";
     private static final String TESTS_SOURCE = "tests";
     private static final String TESTS_CHANGED_BY = "code-sync-tests";
+    private static final String POM_SOURCE = "pom-xml";
+    private static final String POM_CHANGED_BY = "code-sync-pom";
 
     private final ServiceRepository services;
     private final ServiceRelationshipsRepository relationships;
@@ -44,19 +50,25 @@ public class CodeSyncCoordinator {
     private final OpenApiParser parser;
     private final RepoFileFetcher repoFetcher;
     private final JavaTestExtractor testExtractor;
+    private final PomParser pomParser;
+    private final String orgGroupPrefix;
 
     public CodeSyncCoordinator(ServiceRepository services,
                                ServiceRelationshipsRepository relationships,
                                OpenApiFetcher fetcher,
                                OpenApiParser parser,
                                RepoFileFetcher repoFetcher,
-                               JavaTestExtractor testExtractor) {
+                               JavaTestExtractor testExtractor,
+                               PomParser pomParser,
+                               @Value("${atlas.code-sync.org-group-prefix:com.atlas}") String orgGroupPrefix) {
         this.services = services;
         this.relationships = relationships;
         this.fetcher = fetcher;
         this.parser = parser;
         this.repoFetcher = repoFetcher;
         this.testExtractor = testExtractor;
+        this.pomParser = pomParser;
+        this.orgGroupPrefix = orgGroupPrefix;
     }
 
     /**
@@ -145,6 +157,121 @@ public class CodeSyncCoordinator {
 
     private static String scenarioKey(String packageName, String className, String methodName) {
         return (packageName == null ? "" : packageName) + "|" + className + "|" + methodName;
+    }
+
+    /**
+     * Refresh pom-derived metadata + external-dep observations for one
+     * service (M4). Append-only: every observation is an INSERT;
+     * disappearance is recorded as a tombstone.
+     *
+     * <p>Metadata keys observed: {@code language}, {@code language_version}
+     * (from {@code java.version} property), {@code framework} +
+     * {@code framework_version} (when the parent is
+     * {@code spring-boot-starter-parent}), {@code build_tool}
+     * ({@code Maven}). Each is written as a {@code source='pom-xml'} row in
+     * {@code service_metadata}.
+     *
+     * <p>External dependencies: each declared {@code <dependency>} whose
+     * groupId is NOT under {@code atlas.code-sync.org-group-prefix} (default
+     * {@code com.atlas}) becomes an {@code external_dependencies} row (one
+     * per groupId:artifactId pair, deduped) and a corresponding
+     * {@code service_external_deps} observation tagged
+     * {@code source='pom-xml'}.
+     *
+     * @return counts of inserted (created), unchanged-and-skipped (skipped),
+     *         and tombstoned (deleted) writes. Updates are appended as new
+     *         observations and so count toward {@code created}.
+     */
+    @Transactional
+    public CodeSyncResult refreshPom(UUID serviceId) {
+        Service service = services.findById(serviceId)
+                .orElseThrow(() -> new IllegalArgumentException("No such service: " + serviceId));
+
+        String repoUrl = service.getRepoUrl();
+        if (repoUrl == null || repoUrl.isBlank()) {
+            return CodeSyncResult.empty();
+        }
+        RepoFileFetcher.GitHubRepoCoords coords = RepoFileFetcher.parseGitHubUrl(repoUrl);
+        String pomPath = pomPathFor(service);
+        Optional<RepoFile> pomFile = repoFetcher.fetchFile(coords.owner(), coords.repo(), pomPath);
+        if (pomFile.isEmpty()) {
+            return CodeSyncResult.empty();
+        }
+        PomFacts facts = pomParser.parse(pomFile.get().content());
+
+        int created = 0;
+        int deleted = 0;
+
+        // ----- service_metadata: append-only diff -----
+        Map<String, String> freshMetadata = freshMetadataFromFacts(facts);
+        Map<String, ServiceMetadata> liveMetadata = new HashMap<>();
+        for (ServiceMetadata m : relationships.findServiceMetadataFor(serviceId)) {
+            if (POM_SOURCE.equals(m.source())) {
+                liveMetadata.put(m.key(), m);
+            }
+        }
+        for (Map.Entry<String, String> e : freshMetadata.entrySet()) {
+            ServiceMetadata current = liveMetadata.remove(e.getKey());
+            if (current == null || !equalsNullable(current.value(), e.getValue())) {
+                relationships.insertServiceMetadata(serviceId, e.getKey(), e.getValue(), POM_SOURCE);
+                created++;
+            }
+        }
+        for (ServiceMetadata stale : liveMetadata.values()) {
+            relationships.writeServiceMetadataTombstone(serviceId, stale.key(), POM_SOURCE);
+            deleted++;
+        }
+
+        // ----- external dependencies: append-only diff -----
+        // Live view of pom-source external-dep observations, keyed by
+        // external_dependency_id (the durable identity for a dep).
+        Set<UUID> livePomExtDepIds = new HashSet<>(
+                relationships.findLiveExternalDepsForService(serviceId, POM_SOURCE));
+
+        Map<String, UUID> resolvedDepIds = new LinkedHashMap<>(); // groupId:artifactId -> ext_dep id
+        for (DependencyCoords dep : facts.dependencies()) {
+            if (dep.groupId() == null || dep.artifactId() == null) continue;
+            if (orgGroupPrefix != null && !orgGroupPrefix.isBlank()
+                    && dep.groupId().startsWith(orgGroupPrefix)) continue;
+            String depKey = dep.groupId() + ":" + dep.artifactId();
+            UUID extDepId = relationships.findExternalDependencyIdByName(depKey)
+                    .orElseGet(() -> relationships.insertExternalDependency(depKey, null));
+            resolvedDepIds.put(depKey, extDepId);
+        }
+        for (UUID extDepId : resolvedDepIds.values()) {
+            if (!livePomExtDepIds.remove(extDepId)) {
+                relationships.insertServiceExternalDepObservation(serviceId, extDepId,
+                        null, POM_SOURCE);
+                created++;
+            }
+        }
+        for (UUID staleExtDepId : livePomExtDepIds) {
+            relationships.writeServiceExternalDepTombstone(serviceId, staleExtDepId, POM_SOURCE);
+            deleted++;
+        }
+
+        if (created + deleted > 0) {
+            relationships.insertServiceChange(serviceId, POM_CHANGED_BY, "updated",
+                    "pom.xml refresh: created=" + created + " deleted=" + deleted);
+        }
+        return new CodeSyncResult(created, 0, deleted, 0);
+    }
+
+    private static String pomPathFor(Service service) {
+        String module = service.getModulePath();
+        if (module == null || module.isBlank()) return "pom.xml";
+        String trimmed = module.endsWith("/") ? module.substring(0, module.length() - 1) : module;
+        return trimmed + "/pom.xml";
+    }
+
+    private static Map<String, String> freshMetadataFromFacts(PomFacts facts) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (facts.language() != null) out.put("language", facts.language());
+        if (facts.languageVersion() != null) out.put("language_version", facts.languageVersion());
+        if (facts.framework() != null) out.put("framework", facts.framework());
+        if (facts.frameworkVersion() != null) out.put("framework_version", facts.frameworkVersion());
+        if (facts.buildTool() != null) out.put("build_tool", facts.buildTool());
+        return out;
     }
 
     /**

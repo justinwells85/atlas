@@ -142,6 +142,31 @@ class RepoFileFetcherTest {
     }
 
     @Test
+    void whenFetchingSingleFile_thenReturnsItsContent() {
+        // GitHub's Contents API for a file path returns one object (not array).
+        String pomXml = "<project><artifactId>example</artifactId></project>";
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/pom.xml"))
+                .willReturn(okJson("""
+                        {"type":"file","name":"pom.xml","path":"pom.xml",
+                         "encoding":"base64","content":"%s"}
+                        """.formatted(Base64.getEncoder().encodeToString(pomXml.getBytes(java.nio.charset.StandardCharsets.UTF_8))))));
+
+        java.util.Optional<RepoFile> file = fetcher.fetchFile("o", "r", "pom.xml");
+
+        assertThat(file).isPresent();
+        assertThat(file.get().path()).isEqualTo("pom.xml");
+        assertThat(file.get().content()).isEqualTo(pomXml);
+    }
+
+    @Test
+    void whenFetchingMissingFile_thenReturnsEmptyOptional() {
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/missing.xml"))
+                .willReturn(aResponse().withStatus(404)));
+
+        assertThat(fetcher.fetchFile("o", "r", "missing.xml")).isEmpty();
+    }
+
+    @Test
     void whenContentsApiReturnsBase64InsteadOfDownloadUrl_thenItIsDecoded() {
         // Smaller files come back base64-inline rather than via download_url.
         // The fetcher should handle both shapes.

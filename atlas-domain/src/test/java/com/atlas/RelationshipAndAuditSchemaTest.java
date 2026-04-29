@@ -181,7 +181,12 @@ class RelationshipAndAuditSchemaTest {
     }
 
     @Test
-    void whenServiceExternalDepLinkIsDuplicate_thenUniqueViolationIsRaised() {
+    void whenServiceExternalDepLinkIsDuplicate_thenSecondInsertSucceedsAsAdditionalObservation() {
+        // V19/V20 (M4) switched service_external_deps to append-only ingestion
+        // (per the M3.5 model). Multiple observations of the same
+        // (service_id, external_dependency_id) pair are allowed — distinguished
+        // by observed_at, presence, and source. The renderer reads via a
+        // "latest per pair" view; history accumulates by design.
         UUID svc = insertService("svc-ext-dup");
         UUID dep = insertExternalDep("SendGrid-link");
         jdbcTemplate.update(
@@ -189,11 +194,16 @@ class RelationshipAndAuditSchemaTest {
                         "(id, service_id, external_dependency_id) VALUES (?, ?, ?)",
                 UUID.randomUUID(), svc, dep);
 
-        assertThatThrownBy(() -> jdbcTemplate.update(
+        jdbcTemplate.update(
                 "INSERT INTO service_external_deps " +
                         "(id, service_id, external_dependency_id) VALUES (?, ?, ?)",
-                UUID.randomUUID(), svc, dep))
-                .isInstanceOf(DataIntegrityViolationException.class);
+                UUID.randomUUID(), svc, dep);
+
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM service_external_deps " +
+                        "WHERE service_id = ? AND external_dependency_id = ?",
+                Long.class, svc, dep);
+        assertThat(count).isEqualTo(2L);
     }
 
     // --- service_changes (audit) -------------------------------------------

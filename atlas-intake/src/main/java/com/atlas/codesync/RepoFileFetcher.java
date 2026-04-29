@@ -44,6 +44,29 @@ public class RepoFileFetcher {
         return out;
     }
 
+    /**
+     * Fetch one specific file from the repo. Returns empty if the file
+     * doesn't exist (404). Used by M4's pom.xml ingestion — same Contents
+     * API endpoint as the directory walk, but the response shape is a
+     * single object instead of an array.
+     */
+    public java.util.Optional<RepoFile> fetchFile(String owner, String repo, String path) {
+        String uri = "/repos/" + owner + "/" + repo + "/contents/" + path;
+        Map<String, Object> entry;
+        try {
+            entry = http.get()
+                    .uri(uri)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<Map<String, Object>>() {});
+        } catch (HttpClientErrorException.NotFound e) {
+            return java.util.Optional.empty();
+        }
+        if (entry == null) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(loadFile(entry, path));
+    }
+
     private void walk(String owner, String repo, String path, List<RepoFile> out) {
         List<Map<String, Object>> entries;
         // Manual URI build: RestClient's path-variable expansion percent-encodes

@@ -31,4 +31,11 @@ public class CodeSyncController {
     public CodeSyncResult refreshTests(@PathVariable UUID serviceId) {
         return coordinator.refreshTests(serviceId);
     }
+
+    @PostMapping("/refresh-pom/{serviceId}")
+    @Operation(summary = "Re-derive metadata + external-dep observations from the service's pom.xml",
+            description = "Fetches {module_path}/pom.xml from the GitHub repo on services.repo_url, parses the literal declarations, and appends service_metadata and service_external_deps observations tagged source='pom-xml'. Append-only — no in-place edits. Skips dependencies whose groupId is under atlas.code-sync.org-group-prefix (default com.atlas).")
+    public CodeSyncResult refreshPom(@PathVariable UUID serviceId) {
+        return coordinator.refreshPom(serviceId);
+    }
 }

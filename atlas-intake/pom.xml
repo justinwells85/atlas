@@ -60,6 +60,20 @@
         </dependency>
 
         <!--
+            Code-driven docs (M4): parse remote pom.xml files into a Model
+            object via Maven's own XML reader. We use MavenXpp3Reader (older,
+            ubiquitous, simple StringReader interface). Property resolution
+            and parent inheritance are deliberately not done — we read the
+            literal declarations, which is sufficient for surfacing what
+            the pom says without trying to evaluate it.
+        -->
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-model</artifactId>
+            <version>3.9.9</version>
+        </dependency>
+
+        <!--
             Code-driven docs (M1, dogfood): expose atlas-intake's own REST surface as an
             OpenAPI 3 spec at /v3/api-docs so code-sync can ingest it. springdoc is the
             de-facto Spring Boot OpenAPI generator; pinned to a 2.x release that supports

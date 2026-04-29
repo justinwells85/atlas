@@ -210,6 +210,104 @@ public class ServiceRelationshipsRepository {
         return insertTestScenario(serviceId, packageName, className, methodName, source, "absent");
     }
 
+    // --- service_metadata (M4, append-only from day one) ----------------
+
+    /**
+     * Live view: latest observation per {@code (service_id, metadata_key, source)}
+     * where {@code presence='present'}. Multiple sources can hold parallel
+     * truths for the same key (e.g., intake says "Java" and pom-xml also says
+     * "Java"); callers pick a precedence as needed.
+     */
+    public List<ServiceMetadata> findServiceMetadataFor(UUID serviceId) {
+        return jdbc.query(
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, metadata_key, metadata_value, source, presence, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, metadata_key, source " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM service_metadata " +
+                        ") " +
+                        "SELECT id, service_id, metadata_key, metadata_value, source " +
+                        "FROM latest WHERE rn = 1 AND presence = 'present' AND service_id = ? " +
+                        "ORDER BY metadata_key, source",
+                (rs, i) -> new ServiceMetadata(
+                        (UUID) rs.getObject("id"),
+                        (UUID) rs.getObject("service_id"),
+                        rs.getString("metadata_key"),
+                        rs.getString("metadata_value"),
+                        rs.getString("source")),
+                serviceId);
+    }
+
+    /** Append one metadata observation. Defaults to {@code presence='present'}. */
+    public UUID insertServiceMetadata(UUID serviceId, String key, String value, String source) {
+        return insertServiceMetadata(serviceId, key, value, source, "present");
+    }
+
+    public UUID insertServiceMetadata(UUID serviceId, String key, String value,
+                                      String source, String presence) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO service_metadata " +
+                        "(id, service_id, metadata_key, metadata_value, source, presence) " +
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                id, serviceId, key, value, source, presence);
+        return id;
+    }
+
+    /** Append a {@code presence='absent'} metadata tombstone. */
+    public UUID writeServiceMetadataTombstone(UUID serviceId, String key, String source) {
+        return insertServiceMetadata(serviceId, key, null, source, "absent");
+    }
+
+    // --- service_external_deps (append-only as of M4 / V19) -------------
+
+    /**
+     * Append one service_external_deps observation. The ON DELETE CASCADE on
+     * external_dependency_id is intact; if you {@link #insertExternalDependency}
+     * separately, link the resulting id here.
+     */
+    public UUID insertServiceExternalDepObservation(UUID serviceId, UUID externalDependencyId,
+                                                    String description, String source) {
+        return insertServiceExternalDepObservation(serviceId, externalDependencyId, description,
+                source, "present");
+    }
+
+    public UUID insertServiceExternalDepObservation(UUID serviceId, UUID externalDependencyId,
+                                                    String description, String source, String presence) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO service_external_deps " +
+                        "(id, service_id, external_dependency_id, description, source, presence) " +
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                id, serviceId, externalDependencyId, description, source, presence);
+        return id;
+    }
+
+    /** Append a {@code presence='absent'} tombstone for an external dep no longer declared. */
+    public UUID writeServiceExternalDepTombstone(UUID serviceId, UUID externalDependencyId, String source) {
+        return insertServiceExternalDepObservation(serviceId, externalDependencyId, null, source, "absent");
+    }
+
+    /**
+     * Live view of {@code external_dependency_id}s a service currently
+     * has under a given {@code source} (latest observation per
+     * {@code (service_id, external_dependency_id, source)} where
+     * {@code presence='present'}). Used by code-sync's append-only diff.
+     */
+    public List<UUID> findLiveExternalDepsForService(UUID serviceId, String source) {
+        return jdbc.query(
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, external_dependency_id, source, presence, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, external_dependency_id, source " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM service_external_deps " +
+                        ") " +
+                        "SELECT external_dependency_id FROM latest " +
+                        "WHERE rn = 1 AND presence = 'present' AND service_id = ? AND source = ?",
+                (rs, i) -> (UUID) rs.getObject("external_dependency_id"),
+                serviceId, source);
+    }
+
     /** Update services.tests_page_id after the sync coordinator creates the per-service tests page. */
     public void setServiceTestsPageId(UUID serviceId, String pageId) {
         jdbc.update(

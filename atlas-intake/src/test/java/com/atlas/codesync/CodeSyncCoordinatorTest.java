@@ -2,6 +2,7 @@ package com.atlas.codesync;
 
 import com.atlas.services.ApiSummary;
 import com.atlas.services.Service;
+import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
 import com.atlas.services.ServiceStatus;
@@ -22,6 +23,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
@@ -76,6 +78,9 @@ class CodeSyncCoordinatorTest {
         jdbc.update("DELETE FROM api_consumers");
         jdbc.update("DELETE FROM apis");
         jdbc.update("DELETE FROM service_test_scenarios");
+        jdbc.update("DELETE FROM service_metadata");
+        jdbc.update("DELETE FROM service_external_deps");
+        jdbc.update("DELETE FROM external_dependencies");
         jdbc.update("DELETE FROM service_changes");
         jdbc.update("DELETE FROM services");
         wireMock.resetAll();
@@ -419,6 +424,176 @@ class CodeSyncCoordinatorTest {
 
         // The pre-existing scenario survives — refresh failed before any mutation.
         assertThat(relationships.findTestScenariosFor(s.getId())).hasSize(1);
+    }
+
+    // ---- refreshPom (M4) -------------------------------------------------
+
+    @Test
+    void whenServiceHasNoRepoUrl_thenRefreshPomIsNoop() {
+        Service s = saveServiceWithRepo("no-repo-pom", null, null);
+
+        CodeSyncResult result = coordinator.refreshPom(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+        assertThat(relationships.findServiceMetadataFor(s.getId())).isEmpty();
+    }
+
+    @Test
+    void whenPomDeclaresJavaSpringBoot_thenMetadataObservationsAreWritten() {
+        Service s = saveServiceWithRepo("pom-svc", "https://github.com/o/r", null);
+        stubGithubFile("/repos/o/r/contents/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <parent>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-starter-parent</artifactId>
+                        <version>4.0.6</version>
+                    </parent>
+                    <artifactId>pom-svc</artifactId>
+                    <properties>
+                        <java.version>21</java.version>
+                    </properties>
+                </project>
+                """);
+
+        coordinator.refreshPom(s.getId());
+
+        Map<String, String> meta = relationships.findServiceMetadataFor(s.getId()).stream()
+                .collect(java.util.stream.Collectors.toMap(ServiceMetadata::key, ServiceMetadata::value));
+        assertThat(meta).containsEntry("language", "Java");
+        assertThat(meta).containsEntry("language_version", "21");
+        assertThat(meta).containsEntry("framework", "Spring Boot");
+        assertThat(meta).containsEntry("framework_version", "4.0.6");
+        assertThat(meta).containsEntry("build_tool", "Maven");
+    }
+
+    @Test
+    void whenPomHasExternalDeps_thenExternalDepsAreCreatedAndOrgDepsAreSkipped() {
+        Service s = saveServiceWithRepo("dep-svc", "https://github.com/o/r", null);
+        stubGithubFile("/repos/o/r/contents/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>dep-svc</artifactId>
+                    <dependencies>
+                        <dependency>
+                            <groupId>com.atlas</groupId>
+                            <artifactId>atlas-domain</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>org.springframework.boot</groupId>
+                            <artifactId>spring-boot-starter-web</artifactId>
+                        </dependency>
+                        <dependency>
+                            <groupId>com.anthropic</groupId>
+                            <artifactId>anthropic-java</artifactId>
+                        </dependency>
+                    </dependencies>
+                </project>
+                """);
+
+        coordinator.refreshPom(s.getId());
+
+        // External deps live view excludes the com.atlas one but includes the others.
+        java.util.List<String> depNames = jdbc.queryForList(
+                "SELECT name FROM external_dependencies ORDER BY name", String.class);
+        assertThat(depNames).containsExactlyInAnyOrder(
+                "com.anthropic:anthropic-java",
+                "org.springframework.boot:spring-boot-starter-web");
+    }
+
+    @Test
+    void whenPomIsRefreshedTwiceWithSameContent_thenSecondRunIsNoop() {
+        Service s = saveServiceWithRepo("idem-pom", "https://github.com/o/r", null);
+        String pom = """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>x</artifactId>
+                </project>
+                """;
+        stubGithubFile("/repos/o/r/contents/pom.xml", pom);
+        coordinator.refreshPom(s.getId());
+
+        wireMock.resetAll();
+        stubGithubFile("/repos/o/r/contents/pom.xml", pom);
+        CodeSyncResult result = coordinator.refreshPom(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+    }
+
+    @Test
+    void whenDependencyIsRemovedFromPom_thenTombstoneIsAppendedAndLiveViewExcludesIt() {
+        Service s = saveServiceWithRepo("trim-pom", "https://github.com/o/r", null);
+        stubGithubFile("/repos/o/r/contents/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>x</artifactId>
+                    <dependencies>
+                        <dependency><groupId>com.example</groupId><artifactId>keep</artifactId></dependency>
+                        <dependency><groupId>com.example</groupId><artifactId>drop</artifactId></dependency>
+                    </dependencies>
+                </project>
+                """);
+        coordinator.refreshPom(s.getId());
+
+        wireMock.resetAll();
+        stubGithubFile("/repos/o/r/contents/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>x</artifactId>
+                    <dependencies>
+                        <dependency><groupId>com.example</groupId><artifactId>keep</artifactId></dependency>
+                    </dependencies>
+                </project>
+                """);
+        CodeSyncResult result = coordinator.refreshPom(s.getId());
+
+        assertThat(result.deleted()).isEqualTo(1);
+        // Two underlying rows still exist (live observation + tombstone).
+        Long total = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM service_external_deps WHERE service_id = ?",
+                Long.class, s.getId());
+        assertThat(total).isEqualTo(3L); // 2 created + 1 tombstone
+        // Live view via the repo helper excludes the dropped dep.
+        assertThat(relationships.findLiveExternalDepsForService(s.getId(), "pom-xml")).hasSize(1);
+    }
+
+    @Test
+    void whenPomFileIsMissing_thenRefreshIsNoop() {
+        Service s = saveServiceWithRepo("missing-pom", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/pom.xml"))
+                .willReturn(aResponse().withStatus(404)));
+
+        CodeSyncResult result = coordinator.refreshPom(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+    }
+
+    @Test
+    void whenPomHasModulePath_thenFetcherUsesIt() {
+        Service s = saveServiceWithRepo("modular-pom", "https://github.com/o/r", "atlas-intake");
+        stubGithubFile("/repos/o/r/contents/atlas-intake/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>atlas-intake</artifactId>
+                </project>
+                """);
+
+        coordinator.refreshPom(s.getId());
+
+        assertThat(relationships.findServiceMetadataFor(s.getId()))
+                .extracting(ServiceMetadata::key).contains("language", "build_tool");
+    }
+
+    private void stubGithubFile(String path, String content) {
+        String b64 = java.util.Base64.getEncoder().encodeToString(
+                content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        wireMock.stubFor(get(urlPathEqualTo(path)).willReturn(okJson(
+                String.format("""
+                        {"type":"file","name":"%s","path":"%s","encoding":"base64","content":"%s"}
+                        """,
+                        path.substring(path.lastIndexOf('/') + 1),
+                        path.startsWith("/repos/o/r/contents/") ? path.substring("/repos/o/r/contents/".length()) : path,
+                        b64))));
     }
 
     // ---- helpers --------------------------------------------------------
