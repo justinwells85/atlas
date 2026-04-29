@@ -57,7 +57,7 @@ public class ServiceRelationshipsRepository {
     /** Find APIs of a given provenance for one service. Used by code-sync upsert logic. */
     public List<ApiSummary> findApisBySource(UUID serviceId, String source) {
         return jdbc.query(
-                "SELECT id, path, method, auth_method, description, source " +
+                "SELECT id, path, method, auth_method, description, source, confluence_page_id " +
                         "FROM apis WHERE service_id = ? AND source = ? " +
                         "ORDER BY path, method",
                 (rs, i) -> new ApiSummary(
@@ -66,8 +66,16 @@ public class ServiceRelationshipsRepository {
                         rs.getString("method"),
                         rs.getString("auth_method"),
                         rs.getString("description"),
-                        rs.getString("source")),
+                        rs.getString("source"),
+                        rs.getString("confluence_page_id")),
                 serviceId, source);
+    }
+
+    /** Stamp the Confluence page id on one api row after the sync coordinator creates its endpoint page. */
+    public void setApiConfluencePageId(UUID apiId, String confluencePageId) {
+        jdbc.update(
+                "UPDATE apis SET confluence_page_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                confluencePageId, apiId);
     }
 
     /** Insert one row in {@code api_consumers} linking an API to a consumer service. */
@@ -163,7 +171,7 @@ public class ServiceRelationshipsRepository {
 
     public List<ApiSummary> findApisFor(UUID serviceId) {
         return jdbc.query(
-                "SELECT id, path, method, auth_method, description, source " +
+                "SELECT id, path, method, auth_method, description, source, confluence_page_id " +
                         "FROM apis WHERE service_id = ? ORDER BY path, method",
                 (rs, i) -> new ApiSummary(
                         (UUID) rs.getObject("id"),
@@ -171,7 +179,8 @@ public class ServiceRelationshipsRepository {
                         rs.getString("method"),
                         rs.getString("auth_method"),
                         rs.getString("description"),
-                        rs.getString("source")),
+                        rs.getString("source"),
+                        rs.getString("confluence_page_id")),
                 serviceId);
     }
 

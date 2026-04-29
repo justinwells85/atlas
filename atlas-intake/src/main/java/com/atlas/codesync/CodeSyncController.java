@@ -1,5 +1,6 @@
 package com.atlas.codesync;
 
+import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,6 +19,8 @@ public class CodeSyncController {
     }
 
     @PostMapping("/refresh/{serviceId}")
+    @Operation(summary = "Re-derive the OpenAPI-source apis rows for one service",
+            description = "Fetches the spec at services.openapi_spec_url, parses it, and upserts apis rows tagged source='openapi' (transactional, idempotent). intake-source rows are deferred to, never overwritten. Returns counts of created/updated/deleted/skipped.")
     public CodeSyncResult refresh(@PathVariable UUID serviceId) {
         return coordinator.refreshOpenApi(serviceId);
     }

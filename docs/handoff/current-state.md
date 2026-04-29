@@ -13,8 +13,8 @@ One-page summary of what is built, what is tested, what is not done, and what is
 - **Schema portability proven** to MariaDB 10.11 via `MariaDBPortabilitySmokeTest`. Production target was always MariaDB on RDS; this claim was theoretical until Phase 5.5.
 - **Architecture-map page** in the ATLAS Confluence space (parented under landing) renders the live service-dependency graph as a mermaid flowchart (Phase 5.5 follow-up, plan 2026-04-28 milestone C).
 - **MCP `delete_service` tool + intake removal flow** (plan 2026-04-28 milestone B): MCP-side soft-delete + REST `POST /api/intake/remove` two-stage confirmation flow audited as `intake-removal`.
-- **Code-driven documentation, M1 (plan 2026-04-29)**: per-source provenance landed (`apis.source` + V13 migration); OpenAPI ingestion produces openapi-source `apis` rows from a remote spec, with intake-owned endpoints skipped to honour the unique constraint and `@Transactional` rollback on partial failure. Atlas dogfoods itself: `atlas-intake` exposes `/v3/api-docs` via Springdoc, and `POST /api/code-sync/refresh/{serviceId}` round-trips a real refresh against Postgres.
-- **168 active tests, 0 failures** across all four modules (atlas-domain 33, atlas-intake 50, atlas-mcp 24, atlas-confluence-sync 61). Behavior-focused per ADR-006; mocks only at architectural seams (Anthropic, Confluence, remote OpenAPI hosts).
+- **Code-driven documentation, M1 + M2 (plan 2026-04-29)**: per-source provenance landed (`apis.source` + V13 migration); OpenAPI ingestion produces openapi-source `apis` rows from a remote spec, with intake-owned endpoints skipped to honour the unique constraint and `@Transactional` rollback on partial failure. M2 adds per-endpoint Confluence pages parented under the service page (V14 adds `apis.confluence_page_id`), and the service-page APIs section linkifies to them. atlas-intake dogfoods itself: exposes `/v3/api-docs` via Springdoc with `@Operation` summaries, and `POST /api/code-sync/refresh/{serviceId}` round-trips a refresh against Postgres.
+- **183 active tests, 0 failures** across all four modules (atlas-domain 33, atlas-intake 50, atlas-mcp 24, atlas-confluence-sync 76). Behavior-focused per ADR-006; mocks only at architectural seams (Anthropic, Confluence, remote OpenAPI hosts).
 
 ## What's tested
 
@@ -23,7 +23,7 @@ One-page summary of what is built, what is tested, what is not done, and what is
 | atlas-domain | 33 | Schema constraints (CHECK, UNIQUE, FK CASCADE), repository reads/writes, MariaDB portability smoke. |
 | atlas-intake | 50 | Multi-turn interview state machine, all 11 services-row fields, every relationship-table write path, Anthropic gateway smoke, intake removal flow, code-sync OpenAPI refresh (provenance, intake-skip, transactional rollback, idempotency). |
 | atlas-mcp | 24 | Each MCP tool's contract: search, list, get_service_details, update_service, delete_service, ping. |
-| atlas-confluence-sync | 61 | Renderer output for full/partial/minimal services; ConfluenceClient HTTP shape via WireMock; SyncCoordinator orchestration including 404-recreate and orphan-cleanup; architecture-map renderer; SyncController endpoints. |
+| atlas-confluence-sync | 76 | Renderer output for full/partial/minimal services; ConfluenceClient HTTP shape via WireMock; SyncCoordinator orchestration including 404-recreate, service-level orphan-cleanup, and per-endpoint page lifecycle (M2); architecture-map renderer; ApiEndpointPageRenderer; SyncController endpoints. |
 
 `mvn verify` runs all of these end-to-end with Testcontainers Postgres + MariaDB; no live network calls in CI.
 
@@ -84,9 +84,9 @@ Not all gaps are deferred decisions; some are intentional non-goals at prototype
 
 ## Active plan: code-driven documentation (2026-04-29)
 
-`docs/plans/2026-04-29-code-driven-documentation.md` — five-milestone shift from intake-only to a hybrid where APIs, tests, and pom-derived metadata are auto-refreshed from code. M1 (provenance + OpenAPI ingestion) closed. Next: M2 (per-endpoint Confluence pages). M5 closes with phase-level reflection on whether to push into AI-narrated walkthroughs or production-readiness next.
+`docs/plans/2026-04-29-code-driven-documentation.md` — five-milestone shift from intake-only to a hybrid where APIs, tests, and pom-derived metadata are auto-refreshed from code. M1 (provenance + OpenAPI ingestion) and M2 (per-endpoint Confluence pages) closed. Next: M3 (test-method extraction → "What this service guarantees" page). M5 closes with phase-level reflection on whether to push into AI-narrated walkthroughs or production-readiness next.
 
-Carry-overs from M1 to track: stale intake row at `/api/smoke/anthropic` in the dogfood DB (predates ADR-013); springdoc-generated descriptions are null absent `@Operation` annotations on controllers; code-sync still folded into `atlas-intake` (revisit at M3).
+Carry-overs to track: orphan cleanup for per-endpoint pages when code-sync drops an api row (M2.5 candidate; pattern mirrors ADR-014); stale intake row at `/api/smoke/anthropic` in the dogfood DB (M5 cleanup); code-sync still folded into `atlas-intake` (decision point at end of M3); sync-side live-verify of M2 against the real ATLAS space deferred to user discretion.
 
 ## Repository pointers
 

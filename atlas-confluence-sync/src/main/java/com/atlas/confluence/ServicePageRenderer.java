@@ -75,10 +75,14 @@ public class ServicePageRenderer {
         }
         sb.append("<ul>\n");
         for (ApiPresentation pres : ctx.apis()) {
-            sb.append("<li><strong>")
-                    .append(escape(pres.api().method())).append(" ")
-                    .append(escape(pres.api().path()))
-                    .append("</strong>");
+            sb.append("<li><strong>");
+            String label = pres.api().method() + " " + pres.api().path();
+            if (hasText(pres.endpointPageUrl())) {
+                sb.append(renderLink(pres.endpointPageUrl(), label));
+            } else {
+                sb.append(escape(label));
+            }
+            sb.append("</strong>");
             if (hasText(pres.api().description())) {
                 sb.append(" — ").append(escape(pres.api().description()));
             }

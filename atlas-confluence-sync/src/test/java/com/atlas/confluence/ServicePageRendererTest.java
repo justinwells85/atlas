@@ -206,10 +206,10 @@ class ServicePageRendererTest {
     @Test
     void whenServiceHasNoApiConsumers_thenApiRendersWithoutConsumerLine() {
         Service s = baseService();
-        ApiSummary api = new ApiSummary(UUID.randomUUID(), "/v1/health", "GET", "none", "Health check", "intake");
+        ApiSummary api = new ApiSummary(UUID.randomUUID(), "/v1/health", "GET", "none", "Health check", "intake", null);
         ServicePageContext ctx = new ServicePageContext(
                 s,
-                List.of(new ApiPresentation(api, List.of())),
+                List.of(new ApiPresentation(api, List.of(), null)),
                 List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
 
         String rendered = renderer.render(ctx);
@@ -218,6 +218,39 @@ class ServicePageRendererTest {
                 .contains("/v1/health")
                 .contains("Health check")
                 .doesNotContain("Consumers:");
+    }
+
+    @Test
+    void whenApiHasEndpointPageUrl_thenItIsRenderedAsHyperlinkInTheApisSection() {
+        Service s = baseService();
+        ApiSummary api = new ApiSummary(UUID.randomUUID(), "/v1/health", "GET", null,
+                "Health probe", "openapi", "EP_HEALTH");
+        ServicePageContext ctx = new ServicePageContext(
+                s,
+                List.of(new ApiPresentation(api, List.of(),
+                        "https://atlas.atlassian.net/wiki/spaces/ATLAS/pages/EP_HEALTH")),
+                List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered).contains("href=\"https://atlas.atlassian.net/wiki/spaces/ATLAS/pages/EP_HEALTH\"");
+    }
+
+    @Test
+    void whenApiHasNoEndpointPageUrl_thenMethodPathRendersAsPlainTextNotALink() {
+        Service s = baseService();
+        ApiSummary api = new ApiSummary(UUID.randomUUID(), "/v1/health", "GET", null,
+                "Health probe", "intake", null);
+        ServicePageContext ctx = new ServicePageContext(
+                s,
+                List.of(new ApiPresentation(api, List.of(), null)),
+                List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered).contains("GET /v1/health");
+        // The strong-tag wrapping should not become an anchor when no URL is supplied.
+        assertThat(rendered).doesNotContain("href=\"\"");
     }
 
     // ------------------------------------------------------------------
@@ -241,9 +274,9 @@ class ServicePageRendererTest {
         meta.put("data_classification", "PII");
         s.setMetadata(meta);
 
-        ApiSummary api1 = new ApiSummary(UUID.randomUUID(), "/v1/invoices", "GET", "bearer", "Invoice list endpoint", "intake");
+        ApiSummary api1 = new ApiSummary(UUID.randomUUID(), "/v1/invoices", "GET", "bearer", "Invoice list endpoint", "intake", null);
         ApiConsumer consumer = new ApiConsumer(UUID.randomUUID(), "checkout-service", "Reads invoice totals");
-        ApiPresentation api1Pres = new ApiPresentation(api1, List.of(consumer));
+        ApiPresentation api1Pres = new ApiPresentation(api1, List.of(consumer), null);
 
         ServiceDependencyEdge upstream = new ServiceDependencyEdge(
                 UUID.randomUUID(), "auth-service",

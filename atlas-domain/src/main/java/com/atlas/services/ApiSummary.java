@@ -8,5 +8,6 @@ public record ApiSummary(
         String method,
         String authMethod,
         String description,
-        String source) {
+        String source,
+        String confluencePageId) {
 }

@@ -58,6 +58,7 @@ public class SyncCoordinator {
     private final ServiceRepository serviceRepository;
     private final ServiceRelationshipsRepository relationships;
     private final ServicePageRenderer renderer;
+    private final ApiEndpointPageRenderer endpointRenderer;
     private final LandingPageRenderer landingRenderer;
     private final DataStoreInventoryRenderer dataStoreInventoryRenderer;
     private final ExternalDependencyInventoryRenderer externalDepInventoryRenderer;
@@ -74,6 +75,7 @@ public class SyncCoordinator {
             ServiceRepository serviceRepository,
             ServiceRelationshipsRepository relationships,
             ServicePageRenderer renderer,
+            ApiEndpointPageRenderer endpointRenderer,
             LandingPageRenderer landingRenderer,
             DataStoreInventoryRenderer dataStoreInventoryRenderer,
             ExternalDependencyInventoryRenderer externalDepInventoryRenderer,
@@ -86,6 +88,7 @@ public class SyncCoordinator {
         this.serviceRepository = serviceRepository;
         this.relationships = relationships;
         this.renderer = renderer;
+        this.endpointRenderer = endpointRenderer;
         this.landingRenderer = landingRenderer;
         this.dataStoreInventoryRenderer = dataStoreInventoryRenderer;
         this.externalDepInventoryRenderer = externalDepInventoryRenderer;
@@ -198,6 +201,47 @@ public class SyncCoordinator {
         }
         service.setLastSyncedToConfluence(OffsetDateTime.now());
         serviceRepository.save(service);
+
+        // Per-endpoint pages: each api row gets its own Confluence page, parented
+        // under the service page just persisted. Per-endpoint failures are caught
+        // and logged so one bad endpoint doesn't block the others — orphan
+        // pages from removed apis are deferred per the M2 scope decision in
+        // docs/plans/2026-04-29-code-driven-documentation.md.
+        syncEndpointPages(service, servicePageUrls);
+    }
+
+    private void syncEndpointPages(Service service, Map<UUID, String> servicePageUrls) {
+        String servicePageId = service.getConfluencePageId();
+        String serviceUrl = servicePageId != null ? pageUrlFor(servicePageId) : null;
+        for (ApiSummary api : relationships.findApisFor(service.getId())) {
+            try {
+                syncOneEndpoint(service, api, servicePageId, serviceUrl);
+            } catch (Exception e) {
+                log.warn("Endpoint-page sync failed for {} {} on service {}: {}",
+                        api.method(), api.path(), service.getName(), e.getMessage());
+            }
+        }
+    }
+
+    private void syncOneEndpoint(Service service, ApiSummary api,
+                                 String servicePageId, String serviceUrl) {
+        ApiEndpointPageContext ctx = new ApiEndpointPageContext(service, api, serviceUrl);
+        String body = endpointRenderer.render(ctx);
+        String title = ApiEndpointPageRenderer.pageTitle(service, api);
+        String pageId = api.confluencePageId();
+        if (pageId == null || pageId.isBlank()) {
+            String created = confluenceClient.createPage(resolveSpaceId(), title, body, servicePageId);
+            relationships.setApiConfluencePageId(api.id(), created);
+        } else {
+            try {
+                confluenceClient.updatePage(pageId, title, body, servicePageId);
+            } catch (ConfluencePageNotFoundException e) {
+                log.info("Endpoint page {} for {} {} on {} no longer exists; recreating.",
+                        pageId, api.method(), api.path(), service.getName());
+                String fresh = confluenceClient.createPage(resolveSpaceId(), title, body, servicePageId);
+                relationships.setApiConfluencePageId(api.id(), fresh);
+            }
+        }
     }
 
     private ServicePageContext buildContext(Service service, Map<UUID, String> servicePageUrls,
@@ -207,7 +251,10 @@ public class SyncCoordinator {
         List<ApiPresentation> apiPresentations = new ArrayList<>(apis.size());
         for (ApiSummary api : apis) {
             List<ApiConsumer> consumers = relationships.findApiConsumersFor(api.id());
-            apiPresentations.add(new ApiPresentation(api, consumers));
+            String endpointUrl = api.confluencePageId() == null || api.confluencePageId().isBlank()
+                    ? null
+                    : pageUrlFor(api.confluencePageId());
+            apiPresentations.add(new ApiPresentation(api, consumers, endpointUrl));
         }
         List<ServiceDependencyEdge> upstream = relationships.findUpstreamDependenciesOf(id);
         List<ServiceDependencyEdge> downstream = relationships.findDownstreamDependenciesOf(id);

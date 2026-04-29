@@ -1,6 +1,8 @@
 package com.atlas.confluence;
 
+import com.atlas.services.ApiSummary;
 import com.atlas.services.Service;
+import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
 import com.atlas.services.ServiceStatus;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
@@ -68,6 +70,9 @@ class SyncCoordinatorIntegrationTest {
     ServiceRepository serviceRepository;
 
     @Autowired
+    ServiceRelationshipsRepository relationships;
+
+    @Autowired
     org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     @BeforeEach
@@ -75,6 +80,8 @@ class SyncCoordinatorIntegrationTest {
         wireMock.resetAll();
         // Native hard-DELETE — repository.deleteAll() now soft-deletes
         // (V11 / ADR-014); we want a true clean slate between methods.
+        jdbc.update("DELETE FROM api_consumers");
+        jdbc.update("DELETE FROM apis");
         jdbc.update("DELETE FROM services");
         jdbc.update("DELETE FROM service_changes");
     }
@@ -367,6 +374,115 @@ class SyncCoordinatorIntegrationTest {
                 .withRequestBody(containing("flowchart"))
                 .withRequestBody(containing("atlas-domain"))
                 .withRequestBody(containing("atlas-mcp")));
+    }
+
+    @Test
+    void whenServiceHasApiRows_thenEachEndpointGetsItsOwnPageParentedUnderTheServicePage() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: orders-service")))
+                .willReturn(okJson("{\"id\":\"SVC_PAGE\"}")));
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title",
+                        equalTo("orders-service — POST /v1/orders")))
+                .willReturn(okJson("{\"id\":\"EP_POST_ORDERS\"}")));
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title",
+                        equalTo("orders-service — GET /v1/health")))
+                .willReturn(okJson("{\"id\":\"EP_GET_HEALTH\"}")));
+
+        Service s = createService("orders-service");
+        java.util.UUID postId = relationships.insertApi(s.getId(), "/v1/orders", "POST",
+                "bearer", "Create an order", "intake");
+        java.util.UUID getId = relationships.insertApi(s.getId(), "/v1/health", "GET",
+                null, "Health probe", "intake");
+
+        coordinator.syncOne(s.getId());
+
+        // Each endpoint page is POSTed with the service page as its parent.
+        wireMock.verify(postRequestedFor(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("orders-service — POST /v1/orders")))
+                .withRequestBody(matchingJsonPath("$.parentId", equalTo("SVC_PAGE"))));
+        wireMock.verify(postRequestedFor(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("orders-service — GET /v1/health")))
+                .withRequestBody(matchingJsonPath("$.parentId", equalTo("SVC_PAGE"))));
+
+        // Both api rows now carry the page IDs returned by Confluence.
+        java.util.Map<String, String> pageIds = new java.util.HashMap<>();
+        for (ApiSummary a : relationships.findApisFor(s.getId())) {
+            pageIds.put(a.method() + " " + a.path(), a.confluencePageId());
+        }
+        assertThat(pageIds).containsEntry("POST /v1/orders", "EP_POST_ORDERS");
+        assertThat(pageIds).containsEntry("GET /v1/health", "EP_GET_HEALTH");
+
+        // Sanity: postId / getId still resolve via findApisFor.
+        assertThat(pageIds).hasSize(2);
+        assertThat(postId).isNotNull();
+        assertThat(getId).isNotNull();
+    }
+
+    @Test
+    void whenApiAlreadyHasEndpointPageId_thenSyncUpdatesItRatherThanCreatingNewPage() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/SVC_PRE"))
+                .willReturn(okJson("{\"id\":\"SVC_PRE\",\"version\":{\"number\":1}}")));
+        wireMock.stubFor(put(urlPathEqualTo("/api/v2/pages/SVC_PRE"))
+                .willReturn(okJson("{\"id\":\"SVC_PRE\",\"version\":{\"number\":2}}")));
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/EP_PRE"))
+                .willReturn(okJson("{\"id\":\"EP_PRE\",\"version\":{\"number\":3}}")));
+        wireMock.stubFor(put(urlPathEqualTo("/api/v2/pages/EP_PRE"))
+                .willReturn(okJson("{\"id\":\"EP_PRE\",\"version\":{\"number\":4}}")));
+
+        Service s = new Service();
+        s.setName("settled-service");
+        s.setStatus(ServiceStatus.ACTIVE);
+        s.setConfluencePageId("SVC_PRE");
+        s = serviceRepository.save(s);
+        java.util.UUID apiId = relationships.insertApi(s.getId(), "/v1/x", "GET",
+                null, "x endpoint", "openapi");
+        relationships.setApiConfluencePageId(apiId, "EP_PRE");
+
+        coordinator.syncOne(s.getId());
+
+        wireMock.verify(putRequestedFor(urlPathEqualTo("/api/v2/pages/EP_PRE"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("settled-service — GET /v1/x"))));
+        // No POSTs to /api/v2/pages for the endpoint should have fired.
+        wireMock.verify(0, postRequestedFor(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("settled-service — GET /v1/x"))));
+    }
+
+    @Test
+    void whenEndpointPagePersistedIdNoLongerExistsInConfluence_thenSyncRecreatesAndUpdatesId() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/SVC_OK"))
+                .willReturn(okJson("{\"id\":\"SVC_OK\",\"version\":{\"number\":1}}")));
+        wireMock.stubFor(put(urlPathEqualTo("/api/v2/pages/SVC_OK"))
+                .willReturn(okJson("{\"id\":\"SVC_OK\",\"version\":{\"number\":2}}")));
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/EP_GONE"))
+                .willReturn(aResponse().withStatus(404)));
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("ghost-svc — GET /v1/x")))
+                .willReturn(okJson("{\"id\":\"EP_FRESH\"}")));
+
+        Service s = new Service();
+        s.setName("ghost-svc");
+        s.setStatus(ServiceStatus.ACTIVE);
+        s.setConfluencePageId("SVC_OK");
+        s = serviceRepository.save(s);
+        java.util.UUID apiId = relationships.insertApi(s.getId(), "/v1/x", "GET",
+                null, "x", "openapi");
+        relationships.setApiConfluencePageId(apiId, "EP_GONE");
+
+        coordinator.syncOne(s.getId());
+
+        ApiSummary refreshed = relationships.findApisFor(s.getId()).get(0);
+        assertThat(refreshed.confluencePageId()).isEqualTo("EP_FRESH");
     }
 
     private Service createService(String name) {

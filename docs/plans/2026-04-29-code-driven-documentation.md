@@ -73,6 +73,8 @@ Code-sync responsibilities **fold into `atlas-intake` initially** rather than sp
 3. Update the service-page renderer's APIs section: each row becomes a hyperlink to the per-endpoint page, with `source` badge in the table.
 4. Per-endpoint page includes a back-link to the service page.
 5. New `confluence_page_id` storage on `apis` table (Flyway `V14`) so endpoint pages are addressable across syncs.
+
+   **Scope decision**: M2 handles create + update only. Orphan cleanup (when code-sync deletes an api row, its Confluence page lingers) is **deferred** — no soft-delete on `apis` yet, no list-children API on `ConfluenceClient`. Same accept-it-at-prototype-scale that the services table had pre-ADR-014. Captured as an M2 follow-up; will be addressed alongside M3 or as a one-off cleanup.
 6. **Carry-over from M1**: springdoc emits null operation descriptions absent `@Operation` annotations on controllers. Decide one of: (a) annotate Atlas's controllers (`IntakeController`, `SmokeController`, `CodeSyncController`) with `@Operation(summary=...)` for dogfood polish — small, ~1 line per method; (b) accept null descriptions and document in the plan's open questions as "production teams annotate their own controllers"; (c) both. Default: (a) for the dogfood since the per-endpoint pages need *something* to render.
 7. Tests:
    - Renderer output for endpoint with full schema, minimal schema, no schema (incl. null description)
@@ -145,6 +147,7 @@ Decision point at end of M3: code-sync responsibilities are now substantial — 
 
 - 2026-04-29 — plan committed.
 - 2026-04-29 — M1 closed.
+- 2026-04-29 — M2 closed (create + update; orphan cleanup deferred per scope decision).
 
 ## Reflections
 
@@ -168,3 +171,23 @@ Decision point at end of M3: code-sync responsibilities are now substantial — 
 **Resumable summary** *(propagated to `docs/handoff/current-state.md`)*
 
 Branch `main` at commit pending — this commit lands M1 of the code-driven-documentation plan. 168 tests pass across four modules (atlas-domain 33, atlas-intake 50, atlas-mcp 24, atlas-confluence-sync 61). New: `apis.source` provenance column + `services.openapi_spec_url` (V13 migration); `OpenApiFetcher` / `SwaggerOpenApiParser` / `CodeSyncCoordinator` / `CodeSyncController` (in `atlas-intake/src/main/java/com/atlas/codesync/`); springdoc 2.8.13 + jaxb-api 2.3.1 deps so atlas-intake exposes its own `/v3/api-docs`. Live-verified: hitting `POST /api/code-sync/refresh/{atlas-intake-id}` produced 3 openapi-source rows, 1 skip on intake-owned, intake rows untouched. Next milestone: M2 — per-endpoint Confluence pages parented under the service page, with cleanup-on-removal mirroring ADR-014. Open carry-overs: stale intake row at `/api/smoke/anthropic` (predates ADR-013 rename) — not cleaned; springdoc-generated descriptions are null without `@Operation` annotations; code-sync still inside `atlas-intake` (revisit at M3).
+
+### M2 — Per-endpoint Confluence pages
+
+**What's working**
+
+- **Discipline reset on TDD held.** Every behavior in M2 had a failing test before the impl line existed: ten ApiEndpointPageRendererTest cases (red on assertions with the renderer returning `""`), three SyncCoordinatorIntegrationTest cases (red on WireMock verifies), two ServicePageRendererTest cases (red on hyperlink absence). 15 new tests, all written before their corresponding code. The "red on compile" → "red on assertions" → "green" sequence shows up clearly in the test runs.
+- **The existing rendering and sync patterns absorbed the new feature cleanly.** ApiEndpointPageRenderer mirrors the structure of ServicePageRenderer (pure function, escape helpers, thin-note pattern). SyncCoordinator's per-endpoint branch reuses the same create-or-update-with-404-fallback shape as the service-page branch. ApiPresentation gained one field; no new top-level types were needed except the renderer's context record.
+- **The carry-over `@Operation` pass paid off twice.** Annotating IntakeController, SmokeController, and CodeSyncController gave the spec real summaries (visible in `/v3/api-docs` after restart), and the M1 round-trip re-ran on the dogfood produced 3 updated openapi rows whose descriptions are now populated. M2's per-endpoint pages will render with real text, not "(No description documented.)".
+- **Scope boundary held.** I deliberately deferred orphan cleanup at the start, documented it inline in the plan, and resisted folding it back in mid-stream. M2 lands as a coherent shippable increment.
+
+**What's not — and what to do about it**
+
+- **Orphan cleanup is a real gap, not a nice-to-have.** A service whose code-sync drops an api row will leave a stale Confluence page until something cleans it up. The pattern from ADR-014 (soft-delete + cleanup pass on syncAll) is the right answer. Worth landing as M2.5 before M3 expands the surface area further; otherwise the dogfood accumulates orphan pages with each spec drift.
+- **Live sync-side verification deferred.** The integration tests cover the WireMock contract end-to-end, but I didn't drive a real `atlas-confluence-sync` run against the dogfood ATLAS space — that would have created ~15 new endpoint pages without explicit consent. Worth doing before M3 starts so the page-tree shape is reviewable.
+- **ApiPresentation grew one field; ApiSummary grew one field. ServicePageContext is at 9.** Each addition was small, but the trend is real. Worth watching at M3 — if test-method records also need a per-record context, consider whether a unified Pre-rendered shape would reduce the constructor friction.
+- **The renderer's "spec link" is naïve.** It points at the raw `/v3/api-docs` JSON URL, which is functional but ugly. A future polish pass might link to a Swagger UI URL when one is configured. Capture as a follow-up; not blocking.
+
+**Resumable summary** *(propagated to `docs/handoff/current-state.md`)*
+
+Branch `main` at commit pending — this commit lands M2 of the code-driven-documentation plan. 183 tests pass across four modules (atlas-domain 33, atlas-intake 50, atlas-mcp 24, atlas-confluence-sync 76). New: V14 migration adds `apis.confluence_page_id`; `ApiEndpointPageRenderer` + `ApiEndpointPageContext` in `atlas-confluence-sync`; `SyncCoordinator.syncEndpointPages` creates/updates per-endpoint pages parented under the service page (with 404-fallback to recreate); `ServicePageRenderer` linkifies APIs section to per-endpoint pages when URL is known; `ApiPresentation` gained `endpointPageUrl`; `@Operation` annotations on atlas-intake's controllers (M1 carry-over). Live: spec at `/v3/api-docs` now carries real summaries; code-sync re-run updated 3 openapi rows with populated descriptions. Sync-side live-verify against real Confluence deferred. Next milestone: M3 — test-method extraction. Open carry-overs: orphan cleanup for endpoint pages (M2.5 candidate); stale `/api/smoke/anthropic` intake row in dogfood DB; code-sync still inside `atlas-intake` (decision point at end of M3).
