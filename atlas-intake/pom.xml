@@ -48,6 +48,18 @@
         </dependency>
 
         <!--
+            Code-driven docs (M3): parse Java test sources into a list of
+            (package, class, method) records via the AST. JavaParser is
+            AST-only — no compilation, no classpath needed — which keeps
+            test extraction independent of the target service's build.
+        -->
+        <dependency>
+            <groupId>com.github.javaparser</groupId>
+            <artifactId>javaparser-core</artifactId>
+            <version>3.26.4</version>
+        </dependency>
+
+        <!--
             Code-driven docs (M1, dogfood): expose atlas-intake's own REST surface as an
             OpenAPI 3 spec at /v3/api-docs so code-sync can ingest it. springdoc is the
             de-facto Spring Boot OpenAPI generator; pinned to a 2.x release that supports

@@ -24,4 +24,11 @@ public class CodeSyncController {
     public CodeSyncResult refresh(@PathVariable UUID serviceId) {
         return coordinator.refreshOpenApi(serviceId);
     }
+
+    @PostMapping("/refresh-tests/{serviceId}")
+    @Operation(summary = "Re-derive the test-scenario rows for one service from its repo",
+            description = "Walks {module_path}/src/test/java in the GitHub repo named on services.repo_url, extracts every @Test-annotated method, and upserts service_test_scenarios rows tagged source='tests' (transactional, idempotent). Public repos only at this stage.")
+    public CodeSyncResult refreshTests(@PathVariable UUID serviceId) {
+        return coordinator.refreshTests(serviceId);
+    }
 }

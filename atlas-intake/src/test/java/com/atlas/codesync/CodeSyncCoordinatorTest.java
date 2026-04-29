@@ -5,6 +5,7 @@ import com.atlas.services.Service;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
 import com.atlas.services.ServiceStatus;
+import com.atlas.services.TestScenario;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,6 +14,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.client.RestClientException;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -49,6 +52,13 @@ class CodeSyncCoordinatorTest {
             .options(wireMockConfig().dynamicPort())
             .build();
 
+    @DynamicPropertySource
+    static void codeSyncProps(DynamicPropertyRegistry registry) {
+        // Point RepoFileFetcher at the shared WireMock so tests for refreshTests
+        // can stub the GitHub Contents API endpoints alongside the OpenAPI ones.
+        registry.add("atlas.code-sync.github-api-base", wireMock::baseUrl);
+    }
+
     @Autowired
     CodeSyncCoordinator coordinator;
 
@@ -65,6 +75,7 @@ class CodeSyncCoordinatorTest {
     void wipe() {
         jdbc.update("DELETE FROM api_consumers");
         jdbc.update("DELETE FROM apis");
+        jdbc.update("DELETE FROM service_test_scenarios");
         jdbc.update("DELETE FROM service_changes");
         jdbc.update("DELETE FROM services");
         wireMock.resetAll();
@@ -297,7 +308,139 @@ class CodeSyncCoordinatorTest {
         assertAuditCount(s.getId(), 1);
     }
 
+    // ---- refreshTests (M3) ----------------------------------------------
+
+    @Test
+    void whenServiceHasNoRepoUrl_thenRefreshTestsIsNoop() {
+        Service s = saveServiceWithRepo("no-repo-svc", null, null);
+
+        CodeSyncResult result = coordinator.refreshTests(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+        assertThat(relationships.findTestScenariosFor(s.getId())).isEmpty();
+    }
+
+    @Test
+    void whenRepoHasOneTestFile_thenScenariosAreInsertedWithSourceTests() {
+        Service s = saveServiceWithRepo("test-svc", "https://github.com/o/r", null);
+        stubGithubListing("/repos/o/r/contents/src/test/java", """
+                [{"type":"file","name":"AlphaSpec.java","path":"src/test/java/AlphaSpec.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example.alpha;
+                import org.junit.jupiter.api.Test;
+                class AlphaSpec {
+                    @Test void scenarioOne() {}
+                    @Test void scenarioTwo() {}
+                }
+                """)));
+
+        CodeSyncResult result = coordinator.refreshTests(s.getId());
+
+        assertThat(result.created()).isEqualTo(2);
+        List<TestScenario> scenarios = relationships.findTestScenariosFor(s.getId());
+        assertThat(scenarios).extracting(TestScenario::methodName)
+                .containsExactlyInAnyOrder("scenarioOne", "scenarioTwo");
+        assertThat(scenarios).extracting(TestScenario::source).containsOnly("tests");
+        assertThat(scenarios).extracting(TestScenario::className).containsOnly("AlphaSpec");
+        assertThat(scenarios).extracting(TestScenario::packageName).containsOnly("com.example.alpha");
+    }
+
+    @Test
+    void whenRepoHasModulePath_thenFetcherWalksUnderThatPath() {
+        Service s = saveServiceWithRepo("modular-svc", "https://github.com/o/r", "atlas-intake");
+        stubGithubListing("/repos/o/r/contents/atlas-intake/src/test/java", """
+                [{"type":"file","name":"M.java","path":"atlas-intake/src/test/java/M.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package m;
+                import org.junit.jupiter.api.Test;
+                class M { @Test void scenario() {} }
+                """)));
+
+        coordinator.refreshTests(s.getId());
+
+        assertThat(relationships.findTestScenariosFor(s.getId()))
+                .extracting(TestScenario::className).containsExactly("M");
+    }
+
+    @Test
+    void whenScenarioIsRemovedFromCode_thenItIsDeletedFromDb() {
+        Service s = saveServiceWithRepo("trim-svc", "https://github.com/o/r", null);
+        // Seed a stale scenario directly in the DB; refresh should drop it.
+        relationships.insertTestScenario(s.getId(), "old.pkg", "OldSpec", "oldScenario", "tests");
+
+        stubGithubListing("/repos/o/r/contents/src/test/java", """
+                [{"type":"file","name":"NewSpec.java","path":"src/test/java/NewSpec.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package fresh.pkg;
+                import org.junit.jupiter.api.Test;
+                class NewSpec { @Test void newScenario() {} }
+                """)));
+
+        CodeSyncResult result = coordinator.refreshTests(s.getId());
+
+        assertThat(result.created()).isEqualTo(1);
+        assertThat(result.deleted()).isEqualTo(1);
+        assertThat(relationships.findTestScenariosFor(s.getId()))
+                .extracting(TestScenario::methodName)
+                .containsExactly("newScenario");
+    }
+
+    @Test
+    void whenSecondRefreshHasIdenticalScenarios_thenItIsIdempotent() {
+        Service s = saveServiceWithRepo("idem-svc", "https://github.com/o/r", null);
+        String body = """
+                [{"type":"file","name":"S.java","path":"src/test/java/S.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package p;
+                import org.junit.jupiter.api.Test;
+                class S { @Test void scenario() {} }
+                """));
+        stubGithubListing("/repos/o/r/contents/src/test/java", body);
+        coordinator.refreshTests(s.getId());
+
+        wireMock.resetAll();
+        stubGithubListing("/repos/o/r/contents/src/test/java", body);
+        CodeSyncResult result = coordinator.refreshTests(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+    }
+
+    @Test
+    void whenRepoUrlIsNotGitHub_thenRefreshThrowsAndDbIsUntouched() {
+        Service s = saveServiceWithRepo("non-gh-svc", "https://gitlab.com/o/r", null);
+        relationships.insertTestScenario(s.getId(), "p", "S", "preExisting", "tests");
+
+        assertThatThrownBy(() -> coordinator.refreshTests(s.getId()))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        // The pre-existing scenario survives — refresh failed before any mutation.
+        assertThat(relationships.findTestScenariosFor(s.getId())).hasSize(1);
+    }
+
     // ---- helpers --------------------------------------------------------
+
+    private Service saveServiceWithRepo(String name, String repoUrl, String modulePath) {
+        Service s = new Service();
+        s.setName(name);
+        s.setOwnerTeam("platform");
+        s.setStatus(ServiceStatus.ACTIVE);
+        s.setRepoUrl(repoUrl);
+        s.setModulePath(modulePath);
+        return serviceRepository.saveAndFlush(s);
+    }
+
+    private void stubGithubListing(String path, String body) {
+        wireMock.stubFor(get(urlPathEqualTo(path)).willReturn(okJson(body)));
+    }
+
+    private static String b64(String s) {
+        return java.util.Base64.getEncoder().encodeToString(
+                s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
 
     private Service saveService(String name, String openapiSpecUrl) {
         Service s = new Service();

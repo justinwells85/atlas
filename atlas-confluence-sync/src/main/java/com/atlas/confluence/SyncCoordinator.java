@@ -10,6 +10,7 @@ import com.atlas.services.ServiceDependencyEdge;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
 import com.atlas.services.SoftDeletedApiPage;
+import com.atlas.services.TestScenario;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -60,6 +61,7 @@ public class SyncCoordinator {
     private final ServiceRelationshipsRepository relationships;
     private final ServicePageRenderer renderer;
     private final ApiEndpointPageRenderer endpointRenderer;
+    private final TestScenariosPageRenderer testScenariosRenderer;
     private final LandingPageRenderer landingRenderer;
     private final DataStoreInventoryRenderer dataStoreInventoryRenderer;
     private final ExternalDependencyInventoryRenderer externalDepInventoryRenderer;
@@ -77,6 +79,7 @@ public class SyncCoordinator {
             ServiceRelationshipsRepository relationships,
             ServicePageRenderer renderer,
             ApiEndpointPageRenderer endpointRenderer,
+            TestScenariosPageRenderer testScenariosRenderer,
             LandingPageRenderer landingRenderer,
             DataStoreInventoryRenderer dataStoreInventoryRenderer,
             ExternalDependencyInventoryRenderer externalDepInventoryRenderer,
@@ -90,6 +93,7 @@ public class SyncCoordinator {
         this.relationships = relationships;
         this.renderer = renderer;
         this.endpointRenderer = endpointRenderer;
+        this.testScenariosRenderer = testScenariosRenderer;
         this.landingRenderer = landingRenderer;
         this.dataStoreInventoryRenderer = dataStoreInventoryRenderer;
         this.externalDepInventoryRenderer = externalDepInventoryRenderer;
@@ -235,6 +239,39 @@ public class SyncCoordinator {
         // pages from removed apis are deferred per the M2 scope decision in
         // docs/plans/2026-04-29-code-driven-documentation.md.
         syncEndpointPages(service, servicePageUrls);
+        // Per-service tests page (M3 — code-driven docs): always rendered, even
+        // when the service has no scenarios yet, so the sidebar tree is
+        // consistent.
+        syncTestsPage(service);
+    }
+
+    private void syncTestsPage(Service service) {
+        try {
+            List<TestScenario> scenarios = relationships.findTestScenariosFor(service.getId());
+            String servicePageId = service.getConfluencePageId();
+            String serviceUrl = servicePageId != null ? pageUrlFor(servicePageId) : null;
+            TestScenariosPageContext ctx = new TestScenariosPageContext(service, scenarios, serviceUrl);
+            String body = testScenariosRenderer.render(ctx);
+            String title = TestScenariosPageRenderer.pageTitle(service);
+            String pageId = service.getTestsPageId();
+            if (pageId == null || pageId.isBlank()) {
+                String created = confluenceClient.createPage(resolveSpaceId(), title, body, servicePageId);
+                relationships.setServiceTestsPageId(service.getId(), created);
+                service.setTestsPageId(created);
+            } else {
+                try {
+                    confluenceClient.updatePage(pageId, title, body, servicePageId);
+                } catch (ConfluencePageNotFoundException e) {
+                    log.info("Tests page {} for {} no longer exists; recreating.",
+                            pageId, service.getName());
+                    String fresh = confluenceClient.createPage(resolveSpaceId(), title, body, servicePageId);
+                    relationships.setServiceTestsPageId(service.getId(), fresh);
+                    service.setTestsPageId(fresh);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Tests-page sync failed for service {}: {}", service.getName(), e.getMessage());
+        }
     }
 
     private void syncEndpointPages(Service service, Map<UUID, String> servicePageUrls) {

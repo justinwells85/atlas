@@ -69,6 +69,12 @@ public class Service {
     @Column(name = "openapi_spec_url")
     private String openapiSpecUrl;
 
+    @Column(name = "module_path")
+    private String modulePath;
+
+    @Column(name = "tests_page_id")
+    private String testsPageId;
+
     @Column(name = "confluence_page_id")
     private String confluencePageId;
 
@@ -133,6 +139,12 @@ public class Service {
 
     public String getOpenapiSpecUrl() { return openapiSpecUrl; }
     public void setOpenapiSpecUrl(String openapiSpecUrl) { this.openapiSpecUrl = openapiSpecUrl; }
+
+    public String getModulePath() { return modulePath; }
+    public void setModulePath(String modulePath) { this.modulePath = modulePath; }
+
+    public String getTestsPageId() { return testsPageId; }
+    public void setTestsPageId(String testsPageId) { this.testsPageId = testsPageId; }
 
     public String getConfluencePageId() { return confluencePageId; }
     public void setConfluencePageId(String confluencePageId) { this.confluencePageId = confluencePageId; }

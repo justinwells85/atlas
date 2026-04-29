@@ -566,6 +566,88 @@ class SyncCoordinatorIntegrationTest {
         assertThat(total).isEqualTo(1L);
     }
 
+    @Test
+    void whenServiceHasTestScenarios_thenSyncCreatesTestsPageParentedUnderServicePage() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: tested-svc")))
+                .willReturn(okJson("{\"id\":\"SVC_PAGE\"}")));
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("tested-svc — Tests")))
+                .willReturn(okJson("{\"id\":\"TESTS_PAGE\"}")));
+
+        Service s = createService("tested-svc");
+        relationships.insertTestScenario(s.getId(), "com.example", "Spec", "scenarioOne", "tests");
+        relationships.insertTestScenario(s.getId(), "com.example", "Spec", "scenarioTwo", "tests");
+
+        coordinator.syncOne(s.getId());
+
+        wireMock.verify(postRequestedFor(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("tested-svc — Tests")))
+                .withRequestBody(matchingJsonPath("$.parentId", equalTo("SVC_PAGE")))
+                .withRequestBody(matchingJsonPath("$.body.value",
+                        containing("scenarioOne"))));
+
+        Service reloaded = serviceRepository.findById(s.getId()).orElseThrow();
+        assertThat(reloaded.getTestsPageId()).isEqualTo("TESTS_PAGE");
+    }
+
+    @Test
+    void whenServiceAlreadyHasTestsPageId_thenSyncUpdatesItRatherThanCreating() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/SVC_OK"))
+                .willReturn(okJson("{\"id\":\"SVC_OK\",\"version\":{\"number\":1}}")));
+        wireMock.stubFor(put(urlPathEqualTo("/api/v2/pages/SVC_OK"))
+                .willReturn(okJson("{\"id\":\"SVC_OK\",\"version\":{\"number\":2}}")));
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/pages/TESTS_OK"))
+                .willReturn(okJson("{\"id\":\"TESTS_OK\",\"version\":{\"number\":3}}")));
+        wireMock.stubFor(put(urlPathEqualTo("/api/v2/pages/TESTS_OK"))
+                .willReturn(okJson("{\"id\":\"TESTS_OK\",\"version\":{\"number\":4}}")));
+
+        Service s = new Service();
+        s.setName("settled-tests-svc");
+        s.setStatus(ServiceStatus.ACTIVE);
+        s.setConfluencePageId("SVC_OK");
+        s.setTestsPageId("TESTS_OK");
+        s = serviceRepository.save(s);
+        relationships.insertTestScenario(s.getId(), "p", "Spec", "scenario", "tests");
+
+        coordinator.syncOne(s.getId());
+
+        wireMock.verify(putRequestedFor(urlPathEqualTo("/api/v2/pages/TESTS_OK"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("settled-tests-svc — Tests"))));
+        wireMock.verify(0, postRequestedFor(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("settled-tests-svc — Tests"))));
+    }
+
+    @Test
+    void whenServiceHasNoTestScenarios_thenTestsPageIsStillRenderedWithThinNote() {
+        // A service with no scenarios still gets a "Tests" page so the sidebar
+        // tree is consistent. The page just notes "no scenarios documented".
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: empty-tests-svc")))
+                .willReturn(okJson("{\"id\":\"SVC_PAGE\"}")));
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("empty-tests-svc — Tests")))
+                .willReturn(okJson("{\"id\":\"TESTS_PAGE\"}")));
+
+        Service s = createService("empty-tests-svc");
+
+        coordinator.syncOne(s.getId());
+
+        wireMock.verify(postRequestedFor(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("empty-tests-svc — Tests")))
+                .withRequestBody(matchingJsonPath("$.body.value",
+                        containing("No test scenarios documented yet"))));
+    }
+
     private Service createService(String name) {
         Service s = new Service();
         s.setName(name);

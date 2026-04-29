@@ -115,6 +115,48 @@ public class ServiceRelationshipsRepository {
         jdbc.update("UPDATE apis SET confluence_page_id = NULL WHERE id = ?", apiId);
     }
 
+    // --- service_test_scenarios (M3) ---------------------------------------
+
+    /** All test scenarios for one service, ordered by package, class, method. */
+    public List<TestScenario> findTestScenariosFor(UUID serviceId) {
+        return jdbc.query(
+                "SELECT id, service_id, package_name, class_name, method_name, source " +
+                        "FROM service_test_scenarios WHERE service_id = ? " +
+                        "ORDER BY package_name, class_name, method_name",
+                (rs, i) -> new TestScenario(
+                        (UUID) rs.getObject("id"),
+                        (UUID) rs.getObject("service_id"),
+                        rs.getString("package_name"),
+                        rs.getString("class_name"),
+                        rs.getString("method_name"),
+                        rs.getString("source")),
+                serviceId);
+    }
+
+    /** Insert one test scenario row. Returns the generated id. */
+    public UUID insertTestScenario(UUID serviceId, String packageName,
+                                   String className, String methodName, String source) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO service_test_scenarios (id, service_id, package_name, class_name, method_name, source) " +
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                id, serviceId, packageName == null ? "" : packageName,
+                className, methodName, source);
+        return id;
+    }
+
+    /** Hard-delete one scenario by id. Used by code-sync to remove rows no longer present in the test source. */
+    public void deleteTestScenario(UUID scenarioId) {
+        jdbc.update("DELETE FROM service_test_scenarios WHERE id = ?", scenarioId);
+    }
+
+    /** Update services.tests_page_id after the sync coordinator creates the per-service tests page. */
+    public void setServiceTestsPageId(UUID serviceId, String pageId) {
+        jdbc.update(
+                "UPDATE services SET tests_page_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                pageId, serviceId);
+    }
+
     /** Insert one row in {@code api_consumers} linking an API to a consumer service. */
     public void insertApiConsumer(UUID apiId, UUID consumerServiceId, String description) {
         jdbc.update(
