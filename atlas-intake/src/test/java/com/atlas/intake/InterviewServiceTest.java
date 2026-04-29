@@ -335,6 +335,47 @@ class InterviewServiceTest {
         assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_API_AUTH);
     }
 
+    @Test
+    void whenNonHttpProtocolMethodIsProvided_thenInterviewAccepts() {
+        // DD-010: intake must accept non-HTTP API surfaces (MCP tools, gRPC,
+        // GraphQL, AMQP queues, Kafka topics) without re-prompt loops.
+        // Walks one MCP-method API end to end and verifies it persists.
+        InterviewService.TurnResult r = startWithRequiredFields("atlas-mcp", "atlas");
+        r = skipAllOptionalServicesRowFields(r);
+        r = interviewService.next(r.state(), "yes");                 // APIs gate
+        r = interviewService.next(r.state(), "search_services");
+        r = interviewService.next(r.state(), "MCP");                 // non-HTTP method
+        assertThat(r.state().stage()).isEqualTo(InterviewStage.AWAITING_API_AUTH);
+        r = interviewService.next(r.state(), "skip");                // auth
+        r = interviewService.next(r.state(), "MCP tool. Search by name.");
+        r = interviewService.next(r.state(), "skip");                // consumers gate
+        r = interviewService.next(r.state(), "no");                  // another?
+        r = skipDependencyAndStorageSections(r);
+
+        assertThat(r.complete()).isTrue();
+        var apis = relationships.findApisFor(r.serviceId());
+        assertThat(apis).hasSize(1);
+        assertThat(apis.get(0).method()).isEqualTo("MCP");
+    }
+
+    @Test
+    void whenAnyOfTheRecognisedNonHttpProtocolsIsProvided_thenAllAreAccepted() {
+        // Whitelist coverage: MCP, GRPC, GRAPHQL, AMQP, KAFKA must all pass
+        // validation. Lowercase input is normalised to upper-case before check.
+        for (String method : java.util.List.of("MCP", "gRPC", "graphql", "AMQP", "kafka")) {
+            InterviewService.TurnResult r = startWithRequiredFields(
+                    "svc-" + method.toLowerCase(), "team");
+            r = skipAllOptionalServicesRowFields(r);
+            r = interviewService.next(r.state(), "yes");
+            r = interviewService.next(r.state(), "/some-surface");
+            r = interviewService.next(r.state(), method);
+
+            assertThat(r.state().stage())
+                    .as("method '%s' should advance past AWAITING_API_METHOD", method)
+                    .isEqualTo(InterviewStage.AWAITING_API_AUTH);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // API consumers sub-loop (Phase 3.6)
     // -----------------------------------------------------------------------

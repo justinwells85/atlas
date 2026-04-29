@@ -10,20 +10,24 @@ Atlas is an AI-maintained service documentation system. It builds a living inven
 [Service Owners]
        │
        ▼
-[Intake Agent]              ← AI-assisted interview, calls Anthropic API
+[Intake Agent]              ← AI-assisted interview, calls Anthropic API via LlmGateway
        │
        ▼
-[Postgres / MySQL DB]       ← source of truth
+[atlas-domain DB]           ← source of truth (Postgres locally, MariaDB in production)
        │
-       ▼
-[MCP Server]                ← reads DB, exposes tools to MCP clients
-       │
-       ▼
-[Confluence Sync Agent]     ← reads via MCP, writes to Confluence
-       │
-       ▼
-[Confluence Wiki]           ← human-readable, auto-updated pages
+       ├──────────────────────────────┐
+       ▼                              ▼
+[MCP Server]                  [Confluence Sync Agent]
+   ↑ AI clients                  reads via repositories, writes via Atlassian REST API
+   (Claude Desktop, Code, etc.)        │
+                                       ▼
+                                [Confluence Wiki]
 ```
+
+The DB is the source of truth. Two consumers read from it in parallel:
+
+- **MCP Server** is the AI-client surface (Claude Desktop, Claude Code, partner agents). It exposes capability-shaped tools (`search_services`, `list_services`, `get_service_details`, `update_service`, `delete_service`, `ping`).
+- **Confluence Sync Agent** is an internal consumer that reads directly from `atlas-domain`'s repositories and renders pages into the ATLAS Confluence space. Sync is *not* an MCP client today — see `decisions.md` for the rationale and `deferred-decisions.md` if you're considering changing that.
 
 ## Components
 
@@ -48,18 +52,20 @@ PostgreSQL 14+ for local prototyping. The schema (see `schema.md`) is designed t
 
 ### 3. MCP Server
 
-A Spring Boot application using `spring-ai-starter-mcp-server`. Exposes Atlas data via standardized MCP tools, following a four-tool pattern inspired by OB1:
+A Spring Boot application using `spring-ai-starter-mcp-server`. Exposes Atlas data via standardized MCP tools — the AI-client surface. Inspired by OB1's tool pattern:
 
 - `search_services` — find services by name, owner, or attributes
 - `get_service_details` — full data for a service including dependencies
 - `update_service` — apply changes to a service record
 - `list_services` — paginated browse
+- `delete_service` — soft-delete a service (per ADR-014)
+- `ping` — liveness probe
 
-The MCP server is the integration boundary: any MCP-compatible client (Claude Desktop, Claude Code, the sync agent) can connect.
+Any MCP-compatible client (Claude Desktop, Claude Code, partner agents) can connect.
 
 ### 4. Confluence Sync Agent
 
-A scheduled Spring Boot job that reads from the MCP server, transforms data into the Confluence page template (see `confluence-template.md`), and updates Confluence via the Atlassian REST API. Tracks last-sync timestamp per service to enable incremental updates.
+A scheduled Spring Boot job that reads from `atlas-domain`'s JPA repositories, transforms data into the Confluence page template (see `confluence-template.md`), and updates Confluence via the Atlassian REST API. Tracks last-sync timestamp per service to enable incremental updates. Sync is an internal consumer, not an MCP client — both sit on top of the same domain layer.
 
 The agent maintains a structured Confluence space (see `confluence-layout.md`):
 
@@ -72,10 +78,10 @@ All non-Home pages parent under the landing page. Service-to-service references 
 
 ## Data Flow
 
-1. **Intake**: Service owner runs the intake agent. Agent interviews them, validates, writes to DB.
-2. **Storage**: Data lives in Postgres locally (or MySQL/MariaDB in production).
-3. **MCP exposure**: MCP server makes the data discoverable and updatable by AI clients.
-4. **Sync**: Sync agent periodically (or on-demand) reads from MCP, generates Confluence page content, writes via the Atlassian API.
+1. **Intake**: Service owner runs the intake agent. Agent interviews them, validates, writes to DB. Soft-delete and reactivation flow through intake too (per ADR-014).
+2. **Storage**: Data lives in Postgres locally (or MySQL/MariaDB in production). `atlas-domain` is the shared library that exposes JPA entities and repositories.
+3. **AI-client exposure**: MCP server makes the data discoverable and mutable by AI clients via tool calls.
+4. **Sync**: Sync agent periodically (default 15 min) or on-demand reads from `atlas-domain` repositories, generates Confluence page content, writes via the Atlassian API.
 5. **Consumption**: Humans read Confluence. AI agents query MCP directly.
 
 ## Migration Path

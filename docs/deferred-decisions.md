@@ -117,9 +117,19 @@ If the proposal is approved, items 1–3 are a clean follow-up phase (call it Ph
 
 ---
 
-## DD-010 — Intake's `method` validation rejects non-HTTP API surfaces (MCP, gRPC, AMQP, etc.)
+## DD-010 — Intake's `method` validation rejects non-HTTP API surfaces (MCP, gRPC, AMQP, etc.) — RESOLVED
 
-**Status**: Deferred. *Surfaced during the Phase 5 dogfood demo (Atlas registering Atlas).*
+**Status**: Resolved (2026-04-28). *Closed via option 1 — widened whitelist.*
+
+**Resolution**: `InterviewService.VALID_API_METHODS` (renamed from `VALID_HTTP_METHODS`) now accepts the original HTTP verbs plus `MCP, GRPC, GRAPHQL, AMQP, KAFKA`. The `AWAITING_API_METHOD` prompt was updated to advertise both groups. Lowercase input continues to normalise via `toUpperCase()`, so user-entered `gRPC` / `kafka` / `graphql` all pass. Two new tests cover the new tokens (`whenNonHttpProtocolMethodIsProvided_thenInterviewAccepts`, `whenAnyOfTheRecognisedNonHttpProtocolsIsProvided_thenAllAreAccepted`); the original `whenInvalidHttpMethodIsProvided_thenInterviewReprompts` still passes — `BANANA` is still rejected.
+
+Option 2 (a separate `protocol` column on `apis`) remains an option for the production team if heterogeneous-method semantics become a real problem; today the field is descriptive, the renderer just prints whatever string was captured, and a flat whitelist is sufficient.
+
+**Below preserved as the original deferred entry for historical context.**
+
+---
+
+**Status (originally)**: Deferred. *Surfaced during the Phase 5 dogfood demo (Atlas registering Atlas).*
 
 `atlas-intake`'s `AWAITING_API_METHOD` stage validates user input against a fixed HTTP-verb whitelist (`GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS`). When registering `atlas-mcp` — which exposes 5 MCP tools (`search_services`, `list_services`, `get_service_details`, `update_service`, `ping`) — labeling the method as `MCP` was rejected; intake re-prompted in a loop until the driver hit its turn cap.
 

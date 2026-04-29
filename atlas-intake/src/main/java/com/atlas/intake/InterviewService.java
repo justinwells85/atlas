@@ -60,8 +60,12 @@ public class InterviewService {
 
     private static final int BRIEF_DESCRIPTION_THRESHOLD = 20;
     private static final String SKIP_TOKEN = "skip";
-    private static final Set<String> VALID_HTTP_METHODS =
-            Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS");
+    // HTTP verbs plus a small whitelist of non-HTTP API surface names so
+    // intake can register MCP tools, gRPC services, GraphQL endpoints,
+    // AMQP queues, and Kafka topics without re-prompting (DD-010).
+    private static final Set<String> VALID_API_METHODS =
+            Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
+                    "MCP", "GRPC", "GRAPHQL", "AMQP", "KAFKA");
     private static final Set<String> YES_TOKENS = Set.of("y", "yes");
     private static final Set<String> NO_TOKENS = Set.of("n", "no", "skip");
 
@@ -204,7 +208,8 @@ public class InterviewService {
         return switch (s.stage()) {
             case AWAITING_API_PATH -> askWithError(s, "Path of the API endpoint? (e.g., '/v1/orders')");
             case AWAITING_API_METHOD -> askWithError(s,
-                    "HTTP method? (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)");
+                    "API method? (HTTP verb: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS — "
+                            + "or non-HTTP: MCP, gRPC, GraphQL, AMQP, Kafka)");
             case AWAITING_API_AUTH -> askWithError(s,
                     "Auth method? (e.g., 'api-key', 'oauth2', or 'skip')");
             case AWAITING_API_DESCRIPTION -> askWithError(s,
@@ -345,8 +350,8 @@ public class InterviewService {
             }
             case AWAITING_API_METHOD -> {
                 String method = trimmed.toUpperCase();
-                if (!VALID_HTTP_METHODS.contains(method)) {
-                    yield s.withError("Method must be one of: " + String.join(", ", VALID_HTTP_METHODS) + ".");
+                if (!VALID_API_METHODS.contains(method)) {
+                    yield s.withError("Method must be one of: " + String.join(", ", VALID_API_METHODS) + ".");
                 }
                 yield s.withCurrentApi(s.currentApi().withMethod(method))
                         .atStage(AWAITING_API_AUTH).clearError();
