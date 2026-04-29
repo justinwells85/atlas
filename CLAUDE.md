@@ -108,6 +108,24 @@ Always show this upfront for non-trivial work:
 
 Group the numbered steps into **review milestones** — points where a deliverable exists that the user can validate (e.g., "tests pass," "schema migrated and verified," "MCP tool returns correct data"). Wait for confirmation before executing the plan. Then work autonomously through each milestone, pausing only at milestone boundaries (or at true blockers) — not between every step.
 
+### 6. Reflect at Milestone and Phase Boundaries
+
+Reflection is part of the deliverable, not a postscript.
+
+**At every milestone boundary**, before reporting completion, append a short reflection to the active plan document under a "Reflections" section:
+
+- **What's working** — patterns, choices, or rhythms worth amplifying in the next milestones.
+- **What's not** — friction, dead ends, or decisions worth reconsidering.
+- **Resumable summary** — a paragraph dense enough that a fresh session can pick up where this one left off without reading the conversation. Cover branch state, test counts, what was just landed, what's deferred, and what's next.
+
+**At every phase boundary** (the last milestone of a phase, or whenever a plan document closes), write a longer reflection that zooms out from the just-finished milestones to the overall project trajectory:
+
+- Are we still on track for the project's stated goals (CLAUDE.md "Project Context" and `docs/roadmap.md`)?
+- Has the work surfaced new risks, new opportunities, or invalidated prior assumptions?
+- Should the next phase be the one currently planned, or has the priority shifted?
+
+Reflections live in the active plan document. Resumable summaries also propagate to `docs/handoff/current-state.md` so handoff stays current — test counts, recently-resolved DDs, and the "what's next" line in that file should reflect the most recent milestone, not be stale by several commits.
+
 ## Working with the User
 
 - Work autonomously toward the next review milestone. Make judgment calls along the way and bundle them into the milestone report rather than pausing to ask. The user prefers to discuss decisions at the milestone, when there is a deliverable to validate against — not at every fork in the road.
