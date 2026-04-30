@@ -3,6 +3,8 @@ package com.atlas.codesync;
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseProblemException;
 import com.github.javaparser.ParseResult;
+import com.github.javaparser.ParserConfiguration;
+import com.github.javaparser.ParserConfiguration.LanguageLevel;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
@@ -30,7 +32,12 @@ import java.util.Optional;
 @Component
 public class JavaTestExtractor {
 
-    private final JavaParser parser = new JavaParser();
+    // Pin the parser to JAVA_21 — Atlas's tech stack is Java 21 LTS. The
+    // default JavaParser config rejects records / switch expressions, so
+    // any test class using them silently dropped to zero scenarios. Same
+    // pin as JavaBeanExtractor.
+    private final JavaParser parser = new JavaParser(
+            new ParserConfiguration().setLanguageLevel(LanguageLevel.JAVA_21));
 
     public List<TestMethodRecord> extract(String javaSource) {
         ParseResult<CompilationUnit> parseResult = parser.parse(javaSource);

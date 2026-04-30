@@ -154,6 +154,32 @@ class JavaTestExtractorTest {
     }
 
     @Test
+    void whenSourceUsesJava21FeaturesLikeRecordsAndSwitchExpressions_thenItStillParses() {
+        // Regression: real Atlas test classes use records (e.g. for fixture
+        // helpers) and switch expressions. JavaParser's default config
+        // rejects everything past Java 8 — without a language-level pin,
+        // these tests were silently dropped from the per-service Tests page.
+        String src = """
+                package com.example;
+                import org.junit.jupiter.api.Test;
+                class BillingSpec {
+                    record Money(int cents, String currency) {}
+                    @Test void whenAmountIsZero_thenStringIsZero() {
+                        String label = switch (0) {
+                            case 0 -> "zero";
+                            default -> "nonzero";
+                        };
+                    }
+                }
+                """;
+
+        List<TestMethodRecord> out = extractor.extract(src);
+
+        assertThat(out).extracting(TestMethodRecord::methodName)
+                .containsExactly("whenAmountIsZero_thenStringIsZero");
+    }
+
+    @Test
     void whenInnerClassHasTestMethod_thenItIsExtractedWithEnclosingClassNameInPath() {
         // JUnit 5 @Nested test classes are inner classes. We surface the
         // outermost (publicly-named) class as the test class — the @Nested

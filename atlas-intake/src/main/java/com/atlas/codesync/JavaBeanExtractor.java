@@ -2,6 +2,8 @@ package com.atlas.codesync;
 
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.ParseResult;
+import com.github.javaparser.ParserConfiguration;
+import com.github.javaparser.ParserConfiguration.LanguageLevel;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
@@ -46,7 +48,12 @@ public class JavaBeanExtractor {
             "Component",
             "Configuration");
 
-    private final JavaParser parser = new JavaParser();
+    // Pin the parser to JAVA_21 — Atlas's tech stack is Java 21 LTS and
+    // real services use records, switch expressions, sealed types, etc.
+    // Default JavaParser config rejects everything past Java 8, so the
+    // dogfood was silently dropping ~12 stereotype classes per refresh.
+    private final JavaParser parser = new JavaParser(
+            new ParserConfiguration().setLanguageLevel(LanguageLevel.JAVA_21));
 
     public List<BeanRecord> extract(String javaSource) {
         ParseResult<CompilationUnit> parseResult = parser.parse(javaSource);

@@ -176,6 +176,38 @@ class JavaBeanExtractorTest {
     }
 
     @Test
+    void whenSourceUsesJava21FeaturesLikeRecordsAndSwitchExpressions_thenItStillParses() {
+        // Regression: real Atlas services (Java 21 LTS) use records inline
+        // and switch expressions in stereotype classes. JavaParser's default
+        // config rejects everything past Java 8, so without an explicit
+        // language-level pin, ~12 source files per atlas-intake refresh
+        // were silently skipped during the Phase 5.6 M4 dogfood.
+        String src = """
+                package com.example.web;
+                import org.springframework.web.bind.annotation.RestController;
+                @RestController
+                public class OrderController {
+                    public record OrderRequest(String sku, int qty) {}
+                    public String classify(int code) {
+                        return switch (code) {
+                            case 1 -> "alpha";
+                            case 2, 3 -> "beta";
+                            default -> "gamma";
+                        };
+                    }
+                }
+                """;
+
+        List<BeanRecord> beans = extractor.extract(src);
+
+        assertThat(beans).hasSize(1);
+        assertThat(beans.get(0).className()).isEqualTo("OrderController");
+        assertThat(beans.get(0).stereotype()).isEqualTo("RestController");
+        assertThat(beans.get(0).publicMethods()).extracting(BeanRecord.MethodRecord::name)
+                .contains("classify");
+    }
+
+    @Test
     void whenSourceHasMultipleStereotypeAnnotations_thenFirstOneWins() {
         // A class annotated with both @RestController and @Service surfaces
         // as RestController (the more specific marker, declared first).
