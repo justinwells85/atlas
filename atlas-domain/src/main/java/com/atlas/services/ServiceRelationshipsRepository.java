@@ -361,6 +361,90 @@ public class ServiceRelationshipsRepository {
                 pageId, serviceId);
     }
 
+    /** Update services.beans_page_id after the sync coordinator creates the per-service Beans page (Phase 5.6 M3). */
+    public void setServiceBeansPageId(UUID serviceId, String pageId) {
+        jdbc.update(
+                "UPDATE services SET beans_page_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                pageId, serviceId);
+    }
+
+    // --- service_beans (Phase 5.6 M3 — append-only from day one) -------
+
+    /**
+     * Append one bean observation. Defaults to {@code presence='present'}
+     * with source {@code 'source-tree'} (the AST-extraction writer).
+     * {@code modulePath} must be non-null — pass {@code ""} for root-rooted
+     * services.
+     */
+    public UUID insertBean(UUID serviceId, String modulePath, String packageName,
+                           String className, String stereotype,
+                           String classJavadocSummary, String publicMethods) {
+        return insertBean(serviceId, modulePath, packageName, className, stereotype,
+                classJavadocSummary, publicMethods, "source-tree", "present");
+    }
+
+    public UUID insertBean(UUID serviceId, String modulePath, String packageName,
+                           String className, String stereotype,
+                           String classJavadocSummary, String publicMethods,
+                           String source, String presence) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO service_beans " +
+                        "(id, service_id, module_path, package_name, class_name, stereotype, " +
+                        " class_javadoc_summary, public_methods, source, presence) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                id, serviceId, modulePath == null ? "" : modulePath,
+                packageName == null ? "" : packageName,
+                className, stereotype, classJavadocSummary, publicMethods,
+                source, presence);
+        return id;
+    }
+
+    /** Append a {@code presence='absent'} tombstone for a bean class no longer in the source tree. */
+    public UUID writeBeanTombstone(UUID serviceId, String modulePath, String packageName,
+                                   String className, String source) {
+        return insertBean(serviceId, modulePath, packageName, className,
+                // Stereotype is required by the table CHECK; carry forward
+                // a sensible default for tombstones — the renderer never
+                // surfaces tombstones, so the value is bookkeeping-only.
+                "Component",
+                null, null, source, "absent");
+    }
+
+    /**
+     * Live view: latest observation per
+     * {@code (service_id, module_path, package_name, class_name, source)}
+     * where {@code presence='present'}. Used by the Beans page renderer.
+     */
+    public List<ServiceBean> findBeansFor(UUID serviceId) {
+        return jdbc.query(
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, module_path, package_name, class_name, stereotype, " +
+                        "         class_javadoc_summary, public_methods, source, presence, " +
+                        "         confluence_page_id, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, module_path, package_name, class_name, source " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM service_beans " +
+                        ") " +
+                        "SELECT id, service_id, module_path, package_name, class_name, stereotype, " +
+                        "       class_javadoc_summary, public_methods, source, confluence_page_id " +
+                        "FROM latest " +
+                        "WHERE rn = 1 AND presence = 'present' AND service_id = ? " +
+                        "ORDER BY stereotype, package_name, class_name",
+                (rs, i) -> new ServiceBean(
+                        (UUID) rs.getObject("id"),
+                        (UUID) rs.getObject("service_id"),
+                        rs.getString("module_path"),
+                        rs.getString("package_name"),
+                        rs.getString("class_name"),
+                        rs.getString("stereotype"),
+                        rs.getString("class_javadoc_summary"),
+                        rs.getString("public_methods"),
+                        rs.getString("source"),
+                        rs.getString("confluence_page_id")),
+                serviceId);
+    }
+
     // --- service_modules (Phase 5.6 M2 — append-only from day one) -----
 
     /**

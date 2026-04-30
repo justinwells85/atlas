@@ -2,6 +2,7 @@ package com.atlas.codesync;
 
 import com.atlas.services.ApiSummary;
 import com.atlas.services.Service;
+import com.atlas.services.ServiceBean;
 import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceModule;
 import com.atlas.services.ServiceRelationshipsRepository;
@@ -48,6 +49,8 @@ public class CodeSyncCoordinator {
     private static final String POM_SOURCE = "pom-xml";
     private static final String POM_CHANGED_BY = "code-sync-pom";
     private static final String STALE_INTAKE_CHANGED_BY = "code-sync-stale-intake-cleanup";
+    private static final String BEANS_SOURCE = "source-tree";
+    private static final String BEANS_CHANGED_BY = "code-sync-beans";
 
     private final ServiceRepository services;
     private final ServiceRelationshipsRepository relationships;
@@ -55,6 +58,7 @@ public class CodeSyncCoordinator {
     private final OpenApiParser parser;
     private final RepoFileFetcher repoFetcher;
     private final JavaTestExtractor testExtractor;
+    private final JavaBeanExtractor beanExtractor;
     private final PomParser pomParser;
     private final String orgGroupPrefix;
 
@@ -64,6 +68,7 @@ public class CodeSyncCoordinator {
                                OpenApiParser parser,
                                RepoFileFetcher repoFetcher,
                                JavaTestExtractor testExtractor,
+                               JavaBeanExtractor beanExtractor,
                                PomParser pomParser,
                                @Value("${atlas.code-sync.org-group-prefix:com.atlas}") String orgGroupPrefix) {
         this.services = services;
@@ -72,6 +77,7 @@ public class CodeSyncCoordinator {
         this.parser = parser;
         this.repoFetcher = repoFetcher;
         this.testExtractor = testExtractor;
+        this.beanExtractor = beanExtractor;
         this.pomParser = pomParser;
         this.orgGroupPrefix = orgGroupPrefix;
     }
@@ -421,6 +427,118 @@ public class CodeSyncCoordinator {
             String frameworkVersion,
             String declaredDeps) {
     }
+
+    /**
+     * Refresh the Spring-stereotype bean rows for one service from its
+     * GitHub repo (Phase 5.6 M3 — L5). Walks {@code {module_path}/src/main/java}
+     * recursively, runs {@link JavaBeanExtractor} on every {@code .java}
+     * source, and upserts {@code service_beans} rows append-only — the
+     * same model used for {@code service_test_scenarios} (M3 of code-driven
+     * docs) and {@code service_modules} (Phase 5.6 M2).
+     *
+     * <p>Stereotype scope: narrow Spring set only — see {@link JavaBeanExtractor}
+     * for the list. The page is regenerated on every sync, so widening
+     * the scope later costs no migration.
+     *
+     * <p>Atomic: fetch + parse complete before any DB mutation; the
+     * mutation is wrapped in a transaction so a partial failure rolls back.
+     *
+     * @return counts of inserted (created) and tombstoned (deleted) writes.
+     */
+    @Transactional
+    public CodeSyncResult refreshBeans(UUID serviceId) {
+        Service service = services.findById(serviceId)
+                .orElseThrow(() -> new IllegalArgumentException("No such service: " + serviceId));
+
+        String repoUrl = service.getRepoUrl();
+        if (repoUrl == null || repoUrl.isBlank()) {
+            return CodeSyncResult.empty();
+        }
+        RepoFileFetcher.GitHubRepoCoords coords = RepoFileFetcher.parseGitHubUrl(repoUrl);
+        String mainPath = mainSourcesPathFor(service);
+        String modulePathTag = service.getModulePath() == null ? "" : service.getModulePath();
+
+        List<RepoFile> sources = repoFetcher.listJavaSourcesUnder(coords.owner(), coords.repo(), mainPath);
+        List<BeanRecord> fresh = new ArrayList<>();
+        for (RepoFile f : sources) {
+            try {
+                fresh.addAll(beanExtractor.extract(f.content()));
+            } catch (IllegalArgumentException e) {
+                log.warn("Skipping unparseable source {}: {}", f.path(), e.getMessage());
+            }
+        }
+
+        // Live view: latest observation per (module_path, package, class) where present.
+        Map<String, ServiceBean> live = new HashMap<>();
+        for (ServiceBean b : relationships.findBeansFor(serviceId)) {
+            live.put(beanKey(b.modulePath(), b.packageName(), b.className()), b);
+        }
+
+        int created = 0;
+        for (BeanRecord rec : fresh) {
+            String publicMethodsJson = serializeMethods(rec.publicMethods());
+            String k = beanKey(modulePathTag, rec.packageName(), rec.className());
+            ServiceBean current = live.remove(k);
+            if (current == null) {
+                relationships.insertBean(serviceId, modulePathTag, rec.packageName(),
+                        rec.className(), rec.stereotype(),
+                        rec.classJavadocSummary(), publicMethodsJson);
+                created++;
+            } else if (beanChanged(current, rec, publicMethodsJson)) {
+                relationships.insertBean(serviceId, modulePathTag, rec.packageName(),
+                        rec.className(), rec.stereotype(),
+                        rec.classJavadocSummary(), publicMethodsJson);
+                created++;
+            }
+        }
+        int deleted = live.size();
+        for (ServiceBean stale : live.values()) {
+            relationships.writeBeanTombstone(serviceId, stale.modulePath(),
+                    stale.packageName(), stale.className(), BEANS_SOURCE);
+        }
+
+        if (created + deleted > 0) {
+            relationships.insertServiceChange(serviceId, BEANS_CHANGED_BY, "updated",
+                    "Beans refresh: created=" + created + " deleted=" + deleted);
+        }
+        return new CodeSyncResult(created, 0, deleted, 0);
+    }
+
+    private static String mainSourcesPathFor(Service service) {
+        String module = service.getModulePath();
+        if (module == null || module.isBlank()) return "src/main/java";
+        String trimmed = module.endsWith("/") ? module.substring(0, module.length() - 1) : module;
+        return trimmed + "/src/main/java";
+    }
+
+    private static String beanKey(String modulePath, String packageName, String className) {
+        return (modulePath == null ? "" : modulePath) + "|"
+                + (packageName == null ? "" : packageName) + "|"
+                + className;
+    }
+
+    private static boolean beanChanged(ServiceBean current, BeanRecord fresh, String freshMethodsJson) {
+        return !equalsNullable(current.stereotype(), fresh.stereotype())
+                || !equalsNullable(current.classJavadocSummary(), fresh.classJavadocSummary())
+                || !equalsNullable(current.publicMethods(), freshMethodsJson);
+    }
+
+    /**
+     * Serialize the extractor's method records to a JSON array string for
+     * persistence in {@code service_beans.public_methods}. Returns
+     * {@code "[]"} when there are no methods so the column is never NULL
+     * for live observations.
+     */
+    private static String serializeMethods(List<BeanRecord.MethodRecord> methods) {
+        try {
+            return BEANS_MAPPER.writeValueAsString(methods);
+        } catch (JsonProcessingException e) {
+            return "[]";
+        }
+    }
+
+    private static final ObjectMapper BEANS_MAPPER = new ObjectMapper()
+            .setSerializationInclusion(JsonInclude.Include.NON_NULL);
 
     private static String pomPathFor(Service service) {
         String module = service.getModulePath();

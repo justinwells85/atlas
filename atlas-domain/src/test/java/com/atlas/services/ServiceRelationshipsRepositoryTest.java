@@ -280,6 +280,62 @@ class ServiceRelationshipsRepositoryTest {
         assertThat(stale.get(0).serviceName()).isEqualTo("module-tombstone");
     }
 
+    // ---- service_beans (Phase 5.6 M3) -----------------------------------
+
+    @Test
+    void whenBeanIsInserted_thenLiveViewReturnsItWithStereotypeAndMethods() {
+        Service svc = save("bean-svc", "team");
+
+        relationships.insertBean(svc.getId(), "", "com.example.web", "OrderController",
+                "RestController", "Handles orders.",
+                "[{\"name\":\"create\",\"signature\":\"Order create()\",\"javadocSummary\":\"Create.\"}]");
+
+        java.util.List<ServiceBean> rows = relationships.findBeansFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        ServiceBean b = rows.get(0);
+        assertThat(b.packageName()).isEqualTo("com.example.web");
+        assertThat(b.className()).isEqualTo("OrderController");
+        assertThat(b.stereotype()).isEqualTo("RestController");
+        assertThat(b.classJavadocSummary()).isEqualTo("Handles orders.");
+        assertThat(b.publicMethods()).contains("Order create()");
+        assertThat(b.source()).isEqualTo("source-tree");
+    }
+
+    @Test
+    void whenBeanHasMultipleObservations_thenLiveViewReturnsLatest() {
+        Service svc = save("bean-evolve", "team");
+
+        relationships.insertBean(svc.getId(), "", "com.example", "OrderService",
+                "Service", "v1 description", "[]");
+        relationships.insertBean(svc.getId(), "", "com.example", "OrderService",
+                "Service", "v2 description", "[]");
+
+        java.util.List<ServiceBean> rows = relationships.findBeansFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).classJavadocSummary()).isEqualTo("v2 description");
+    }
+
+    @Test
+    void whenBeanIsTombstoned_thenLiveViewExcludesIt() {
+        Service svc = save("bean-tombstone", "team");
+
+        relationships.insertBean(svc.getId(), "", "com.example", "OldService",
+                "Service", null, "[]");
+        relationships.writeBeanTombstone(svc.getId(), "", "com.example", "OldService", "source-tree");
+
+        assertThat(relationships.findBeansFor(svc.getId())).isEmpty();
+    }
+
+    @Test
+    void whenServiceBeansPageIdIsSet_thenServiceEntityCarriesIt() {
+        Service svc = save("bean-page", "team");
+
+        relationships.setServiceBeansPageId(svc.getId(), "BEANS_PAGE");
+
+        Service reloaded = services.findById(svc.getId()).orElseThrow();
+        assertThat(reloaded.getBeansPageId()).isEqualTo("BEANS_PAGE");
+    }
+
     @Test
     void whenModuleConfluencePageIdIsSet_thenItIsReturnedAndCanBeCleared() {
         Service svc = save("module-page-id", "team");

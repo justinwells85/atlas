@@ -866,6 +866,94 @@ class CodeSyncCoordinatorTest {
         assertAuditCount(s.getId(), 0);
     }
 
+    // ---- refreshBeans (Phase 5.6 M3) ------------------------------------
+
+    @Test
+    void whenServiceHasNoRepoUrl_thenRefreshBeansIsNoop() {
+        Service s = saveServiceWithRepo("no-repo-bean-svc", null, null);
+
+        CodeSyncResult result = coordinator.refreshBeans(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+        assertThat(relationships.findBeansFor(s.getId())).isEmpty();
+    }
+
+    @Test
+    void whenRepoHasStereotypeClasses_thenServiceBeansRowsArePersisted() {
+        Service s = saveServiceWithRepo("bean-svc", "https://github.com/o/r", null);
+        stubGithubListing("/repos/o/r/contents/src/main/java", """
+                [{"type":"file","name":"OrderController.java","path":"src/main/java/OrderController.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example.web;
+                import org.springframework.web.bind.annotation.RestController;
+                @RestController
+                public class OrderController {
+                    public String create() { return "x"; }
+                }
+                """)));
+
+        CodeSyncResult result = coordinator.refreshBeans(s.getId());
+
+        assertThat(result.created()).isEqualTo(1);
+        java.util.List<com.atlas.services.ServiceBean> beans =
+                relationships.findBeansFor(s.getId());
+        assertThat(beans).hasSize(1);
+        assertThat(beans.get(0).className()).isEqualTo("OrderController");
+        assertThat(beans.get(0).stereotype()).isEqualTo("RestController");
+        assertThat(beans.get(0).publicMethods()).contains("create");
+    }
+
+    @Test
+    void whenBeanDisappearsFromSourceTree_thenItIsTombstonedOnNextRefresh() {
+        Service s = saveServiceWithRepo("shrinking-bean-svc", "https://github.com/o/r", null);
+        // Seed a stale bean directly in the DB to mimic a previous run.
+        relationships.insertBean(s.getId(), "", "old.pkg", "OldService", "Service", null, "[]");
+        // Source tree only has one bean now — a different one.
+        stubGithubListing("/repos/o/r/contents/src/main/java", """
+                [{"type":"file","name":"NewService.java","path":"src/main/java/NewService.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package fresh.pkg;
+                import org.springframework.stereotype.Service;
+                @Service
+                public class NewService {}
+                """)));
+
+        CodeSyncResult result = coordinator.refreshBeans(s.getId());
+
+        assertThat(result.created()).isEqualTo(1);
+        assertThat(result.deleted()).isEqualTo(1);
+        java.util.List<com.atlas.services.ServiceBean> beans =
+                relationships.findBeansFor(s.getId());
+        assertThat(beans).extracting(com.atlas.services.ServiceBean::className)
+                .containsExactly("NewService");
+    }
+
+    @Test
+    void whenSecondBeansRefreshHasIdenticalSource_thenItIsIdempotent() {
+        Service s = saveServiceWithRepo("idem-bean-svc", "https://github.com/o/r", null);
+        String body = """
+                [{"type":"file","name":"S.java","path":"src/main/java/S.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package p;
+                import org.springframework.stereotype.Service;
+                @Service
+                public class S {
+                    public void doStuff() {}
+                }
+                """));
+        stubGithubListing("/repos/o/r/contents/src/main/java", body);
+        coordinator.refreshBeans(s.getId());
+
+        wireMock.resetAll();
+        stubGithubListing("/repos/o/r/contents/src/main/java", body);
+        CodeSyncResult result = coordinator.refreshBeans(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+    }
+
     private void stubGithubFile(String path, String content) {
         String b64 = java.util.Base64.getEncoder().encodeToString(
                 content.getBytes(java.nio.charset.StandardCharsets.UTF_8));

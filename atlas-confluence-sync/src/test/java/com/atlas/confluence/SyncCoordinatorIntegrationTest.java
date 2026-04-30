@@ -714,6 +714,55 @@ class SyncCoordinatorIntegrationTest {
     }
 
     @Test
+    void whenServiceHasBeans_thenSyncCreatesBeansPageParentedUnderServicePage() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: bean-svc")))
+                .willReturn(okJson("{\"id\":\"SVC_PAGE\"}")));
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("bean-svc — Beans")))
+                .willReturn(okJson("{\"id\":\"BEANS_PAGE\"}")));
+
+        Service s = createService("bean-svc");
+        relationships.insertBean(s.getId(), "", "com.example", "OrderController",
+                "RestController", "Handles orders.",
+                "[{\"name\":\"create\",\"signature\":\"Order create()\",\"javadocSummary\":null}]");
+
+        coordinator.syncOne(s.getId());
+
+        wireMock.verify(postRequestedFor(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("bean-svc — Beans")))
+                .withRequestBody(matchingJsonPath("$.parentId", equalTo("SVC_PAGE"))));
+
+        Service reloaded = serviceRepository.findById(s.getId()).orElseThrow();
+        assertThat(reloaded.getBeansPageId()).isEqualTo("BEANS_PAGE");
+    }
+
+    @Test
+    void whenServiceHasNoBeans_thenBeansPageIsStillRenderedWithThinNote() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: empty-bean-svc")))
+                .willReturn(okJson("{\"id\":\"SVC_PAGE\"}")));
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("empty-bean-svc — Beans")))
+                .willReturn(okJson("{\"id\":\"BEANS_PAGE\"}")));
+
+        Service s = createService("empty-bean-svc");
+
+        coordinator.syncOne(s.getId());
+
+        wireMock.verify(postRequestedFor(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("empty-bean-svc — Beans")))
+                .withRequestBody(matchingJsonPath("$.body.value",
+                        containing("No bean classes documented yet"))));
+    }
+
+    @Test
     void whenModuleIsTombstoned_thenSyncCleansUpItsConfluencePageAndNullsTheId() {
         wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
                 .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));

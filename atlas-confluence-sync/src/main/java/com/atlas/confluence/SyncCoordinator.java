@@ -6,6 +6,7 @@ import com.atlas.services.ChangeEntry;
 import com.atlas.services.DatabaseUsage;
 import com.atlas.services.ExternalDependencyUsage;
 import com.atlas.services.Service;
+import com.atlas.services.ServiceBean;
 import com.atlas.services.ServiceDependencyEdge;
 import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceModule;
@@ -65,6 +66,7 @@ public class SyncCoordinator {
     private final ServicePageRenderer renderer;
     private final ApiEndpointPageRenderer endpointRenderer;
     private final ModulePageRenderer modulePageRenderer;
+    private final BeansPageRenderer beansPageRenderer;
     private final TestScenariosPageRenderer testScenariosRenderer;
     private final LandingPageRenderer landingRenderer;
     private final DataStoreInventoryRenderer dataStoreInventoryRenderer;
@@ -84,6 +86,7 @@ public class SyncCoordinator {
             ServicePageRenderer renderer,
             ApiEndpointPageRenderer endpointRenderer,
             ModulePageRenderer modulePageRenderer,
+            BeansPageRenderer beansPageRenderer,
             TestScenariosPageRenderer testScenariosRenderer,
             LandingPageRenderer landingRenderer,
             DataStoreInventoryRenderer dataStoreInventoryRenderer,
@@ -99,6 +102,7 @@ public class SyncCoordinator {
         this.renderer = renderer;
         this.endpointRenderer = endpointRenderer;
         this.modulePageRenderer = modulePageRenderer;
+        this.beansPageRenderer = beansPageRenderer;
         this.testScenariosRenderer = testScenariosRenderer;
         this.landingRenderer = landingRenderer;
         this.dataStoreInventoryRenderer = dataStoreInventoryRenderer;
@@ -257,6 +261,10 @@ public class SyncCoordinator {
         // when the service has no scenarios yet, so the sidebar tree is
         // consistent.
         syncTestsPage(service);
+        // Per-service Beans page (Phase 5.6 M3 — L5 drill-down): always
+        // rendered, even when the service has no stereotype classes yet,
+        // for sidebar-tree consistency. Same lifecycle as the Tests page.
+        syncBeansPage(service);
     }
 
     private void syncTestsPage(Service service) {
@@ -374,6 +382,35 @@ public class SyncCoordinator {
                         orphan.confluencePageId(), orphan.modulePath(),
                         orphan.serviceName(), e.getMessage());
             }
+        }
+    }
+
+    private void syncBeansPage(Service service) {
+        try {
+            List<ServiceBean> beans = relationships.findBeansFor(service.getId());
+            String servicePageId = service.getConfluencePageId();
+            String serviceUrl = servicePageId != null ? pageUrlFor(servicePageId) : null;
+            BeansPageContext ctx = new BeansPageContext(service, beans, serviceUrl);
+            String body = beansPageRenderer.render(ctx);
+            String title = BeansPageRenderer.pageTitle(service);
+            String pageId = service.getBeansPageId();
+            if (pageId == null || pageId.isBlank()) {
+                String created = confluenceClient.createPage(resolveSpaceId(), title, body, servicePageId);
+                relationships.setServiceBeansPageId(service.getId(), created);
+                service.setBeansPageId(created);
+            } else {
+                try {
+                    confluenceClient.updatePage(pageId, title, body, servicePageId);
+                } catch (ConfluencePageNotFoundException e) {
+                    log.info("Beans page {} for {} no longer exists; recreating.",
+                            pageId, service.getName());
+                    String fresh = confluenceClient.createPage(resolveSpaceId(), title, body, servicePageId);
+                    relationships.setServiceBeansPageId(service.getId(), fresh);
+                    service.setBeansPageId(fresh);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Beans-page sync failed for service {}: {}", service.getName(), e.getMessage());
         }
     }
 

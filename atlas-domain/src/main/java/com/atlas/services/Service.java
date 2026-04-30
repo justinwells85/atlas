@@ -75,6 +75,9 @@ public class Service {
     @Column(name = "tests_page_id")
     private String testsPageId;
 
+    @Column(name = "beans_page_id")
+    private String beansPageId;
+
     @Column(name = "confluence_page_id")
     private String confluencePageId;
 
@@ -145,6 +148,9 @@ public class Service {
 
     public String getTestsPageId() { return testsPageId; }
     public void setTestsPageId(String testsPageId) { this.testsPageId = testsPageId; }
+
+    public String getBeansPageId() { return beansPageId; }
+    public void setBeansPageId(String beansPageId) { this.beansPageId = beansPageId; }
 
     public String getConfluencePageId() { return confluencePageId; }
     public void setConfluencePageId(String confluencePageId) { this.confluencePageId = confluencePageId; }

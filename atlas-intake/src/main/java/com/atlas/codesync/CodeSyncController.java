@@ -39,6 +39,13 @@ public class CodeSyncController {
         return coordinator.refreshPom(serviceId);
     }
 
+    @PostMapping("/refresh-beans/{serviceId}")
+    @Operation(summary = "Re-derive Spring stereotype-class observations for one service",
+            description = "Walks {module_path}/src/main/java in the GitHub repo named on services.repo_url, extracts every top-level class annotated with @RestController/@Controller/@Service/@Repository/@Component/@Configuration, and upserts service_beans rows tagged source='source-tree' (transactional, idempotent). Append-only — disappeared classes are tombstoned. Phase 5.6 M3.")
+    public CodeSyncResult refreshBeans(@PathVariable UUID serviceId) {
+        return coordinator.refreshBeans(serviceId);
+    }
+
     @PostMapping("/tombstone-stale-intake-apis/{serviceId}")
     @Operation(summary = "Tombstone intake-source apis rows whose endpoints have no openapi counterpart",
             description = "Opt-in cleanup: appends presence='absent' tombstones (preserving source='intake') for intake-source api observations on this service whose (method, path) does not match any current openapi-source live observation. Audit row writes changed_by='code-sync-stale-intake-cleanup'. Not auto-fired during /refresh — call explicitly when truth-fix is wanted.")
