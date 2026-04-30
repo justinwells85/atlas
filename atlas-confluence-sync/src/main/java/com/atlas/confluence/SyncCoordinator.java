@@ -8,9 +8,11 @@ import com.atlas.services.ExternalDependencyUsage;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceDependencyEdge;
 import com.atlas.services.ServiceMetadata;
+import com.atlas.services.ServiceModule;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
 import com.atlas.services.SoftDeletedApiPage;
+import com.atlas.services.SoftDeletedModulePage;
 import com.atlas.services.TestScenario;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,6 +64,7 @@ public class SyncCoordinator {
     private final ServiceRelationshipsRepository relationships;
     private final ServicePageRenderer renderer;
     private final ApiEndpointPageRenderer endpointRenderer;
+    private final ModulePageRenderer modulePageRenderer;
     private final TestScenariosPageRenderer testScenariosRenderer;
     private final LandingPageRenderer landingRenderer;
     private final DataStoreInventoryRenderer dataStoreInventoryRenderer;
@@ -80,6 +83,7 @@ public class SyncCoordinator {
             ServiceRelationshipsRepository relationships,
             ServicePageRenderer renderer,
             ApiEndpointPageRenderer endpointRenderer,
+            ModulePageRenderer modulePageRenderer,
             TestScenariosPageRenderer testScenariosRenderer,
             LandingPageRenderer landingRenderer,
             DataStoreInventoryRenderer dataStoreInventoryRenderer,
@@ -94,6 +98,7 @@ public class SyncCoordinator {
         this.relationships = relationships;
         this.renderer = renderer;
         this.endpointRenderer = endpointRenderer;
+        this.modulePageRenderer = modulePageRenderer;
         this.testScenariosRenderer = testScenariosRenderer;
         this.landingRenderer = landingRenderer;
         this.dataStoreInventoryRenderer = dataStoreInventoryRenderer;
@@ -113,6 +118,7 @@ public class SyncCoordinator {
         // service list — runs even when there are no live services.
         cleanupDeletedServices();
         cleanupDeletedApiPages();
+        cleanupDeletedModulePages();
 
         List<Service> services = serviceRepository.findAll();
         if (services.isEmpty()) {
@@ -243,6 +249,10 @@ public class SyncCoordinator {
         // pages from removed apis are deferred per the M2 scope decision in
         // docs/plans/2026-04-29-code-driven-documentation.md.
         syncEndpointPages(service, servicePageUrls);
+        // Per-module pages (Phase 5.6 M2 — L4 drill-down): each row in
+        // service_modules gets its own Confluence page parented under the
+        // service. Per-module failures are caught and logged.
+        syncModulePages(service);
         // Per-service tests page (M3 — code-driven docs): always rendered, even
         // when the service has no scenarios yet, so the sidebar tree is
         // consistent.
@@ -275,6 +285,95 @@ public class SyncCoordinator {
             }
         } catch (Exception e) {
             log.warn("Tests-page sync failed for service {}: {}", service.getName(), e.getMessage());
+        }
+    }
+
+    private void syncModulePages(Service service) {
+        List<ServiceModule> modules = relationships.findModulesFor(service.getId());
+        if (modules.isEmpty()) return;
+
+        String servicePageId = service.getConfluencePageId();
+        String serviceUrl = servicePageId != null ? pageUrlFor(servicePageId) : null;
+
+        // Two-pass: pass 1 ensures every module has a Confluence page id
+        // (creates new pages with empty cross-link maps); pass 2 re-renders
+        // each page so parent/child links resolve to URLs from the now-
+        // populated map. Same eventual-consistency pattern the service-page
+        // renderer uses for service-to-service hyperlinks.
+        for (ServiceModule m : modules) {
+            try {
+                ensureModulePageExists(service, m, servicePageId, serviceUrl, modules, Map.of());
+            } catch (Exception e) {
+                log.warn("Module-page create failed for module {} on service {}: {}",
+                        m.modulePath(), service.getName(), e.getMessage());
+            }
+        }
+        // Re-read so newly-created page ids are visible.
+        modules = relationships.findModulesFor(service.getId());
+        Map<String, String> moduleUrls = new HashMap<>();
+        for (ServiceModule m : modules) {
+            if (m.confluencePageId() != null && !m.confluencePageId().isBlank()) {
+                moduleUrls.put(m.modulePath(), pageUrlFor(m.confluencePageId()));
+            }
+        }
+        for (ServiceModule m : modules) {
+            try {
+                renderAndUpdateModulePage(service, m, servicePageId, serviceUrl, modules, moduleUrls);
+            } catch (Exception e) {
+                log.warn("Module-page update failed for module {} on service {}: {}",
+                        m.modulePath(), service.getName(), e.getMessage());
+            }
+        }
+    }
+
+    private void ensureModulePageExists(Service service, ServiceModule m, String servicePageId,
+                                        String serviceUrl, List<ServiceModule> allModules,
+                                        Map<String, String> moduleUrls) {
+        if (m.confluencePageId() != null && !m.confluencePageId().isBlank()) return;
+        ModulePageContext ctx = new ModulePageContext(service, m, allModules, moduleUrls, serviceUrl);
+        String body = modulePageRenderer.render(ctx);
+        String title = ModulePageRenderer.pageTitle(service, m);
+        String created = confluenceClient.createPage(resolveSpaceId(), title, body, servicePageId);
+        relationships.setModuleConfluencePageId(m.id(), created);
+    }
+
+    private void renderAndUpdateModulePage(Service service, ServiceModule m, String servicePageId,
+                                           String serviceUrl, List<ServiceModule> allModules,
+                                           Map<String, String> moduleUrls) {
+        ModulePageContext ctx = new ModulePageContext(service, m, allModules, moduleUrls, serviceUrl);
+        String body = modulePageRenderer.render(ctx);
+        String title = ModulePageRenderer.pageTitle(service, m);
+        String pageId = m.confluencePageId();
+        if (pageId == null || pageId.isBlank()) return; // create path handled in pass 1
+        try {
+            confluenceClient.updatePage(pageId, title, body, servicePageId);
+        } catch (ConfluencePageNotFoundException e) {
+            log.info("Module page {} for {} on {} no longer exists; recreating.",
+                    pageId, m.modulePath(), service.getName());
+            String fresh = confluenceClient.createPage(resolveSpaceId(), title, body, servicePageId);
+            relationships.setModuleConfluencePageId(m.id(), fresh);
+        }
+    }
+
+    /**
+     * Find every "stale" module page — a tombstone (presence='absent') that
+     * is the latest observation for its key and still carries a non-null
+     * {@code confluence_page_id}. Mirrors {@link #cleanupDeletedApiPages()}
+     * at the module grain. Phase 5.6 M2.
+     */
+    private void cleanupDeletedModulePages() {
+        List<SoftDeletedModulePage> orphans = relationships.findStaleModulePages();
+        for (SoftDeletedModulePage orphan : orphans) {
+            try {
+                confluenceClient.deletePage(orphan.confluencePageId());
+                relationships.clearModuleConfluencePageId(orphan.moduleObservationId());
+                log.info("Cleaned up module page {} for tombstoned module {} on service {}",
+                        orphan.confluencePageId(), orphan.modulePath(), orphan.serviceName());
+            } catch (Exception e) {
+                log.warn("Cleanup of module page {} for {} on {} failed: {}",
+                        orphan.confluencePageId(), orphan.modulePath(),
+                        orphan.serviceName(), e.getMessage());
+            }
         }
     }
 

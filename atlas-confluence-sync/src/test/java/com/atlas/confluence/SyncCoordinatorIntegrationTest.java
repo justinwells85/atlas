@@ -660,6 +660,88 @@ class SyncCoordinatorIntegrationTest {
                         containing("No test scenarios documented yet"))));
     }
 
+    // ---- Phase 5.6 M2: per-module page lifecycle ------------------------
+
+    @Test
+    void whenServiceHasModuleRows_thenEachModuleGetsItsOwnPageParentedUnderTheServicePage() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title", equalTo("Service: billing-svc")))
+                .willReturn(okJson("{\"id\":\"SVC_PAGE\"}")));
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title",
+                        equalTo("billing-svc — Module: (root)")))
+                .willReturn(okJson("{\"id\":\"MOD_ROOT\"}")));
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title",
+                        equalTo("billing-svc — Module: billing-api")))
+                .willReturn(okJson("{\"id\":\"MOD_API\"}")));
+        // Pass-2 update of module pages once page ids are known: stub PUT.
+        wireMock.stubFor(put(urlPathEqualTo("/api/v2/pages/MOD_ROOT"))
+                .willReturn(okJson("{\"id\":\"MOD_ROOT\",\"version\":{\"number\":2}}")));
+        wireMock.stubFor(put(urlPathEqualTo("/api/v2/pages/MOD_API"))
+                .willReturn(okJson("{\"id\":\"MOD_API\",\"version\":{\"number\":2}}")));
+
+        Service s = createService("billing-svc");
+        relationships.insertModule(s.getId(), "", null,
+                "com.example", "billing-svc", "1.0", "pom",
+                null, null, null, "[]", "pom-xml");
+        relationships.insertModule(s.getId(), "billing-api", "",
+                "com.example", "billing-api", "1.0", "jar",
+                null, null, null, "[]", "pom-xml");
+
+        coordinator.syncOne(s.getId());
+
+        wireMock.verify(postRequestedFor(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title",
+                        equalTo("billing-svc — Module: (root)")))
+                .withRequestBody(matchingJsonPath("$.parentId", equalTo("SVC_PAGE"))));
+        wireMock.verify(postRequestedFor(urlPathEqualTo("/api/v2/pages"))
+                .withRequestBody(matchingJsonPath("$.title",
+                        equalTo("billing-svc — Module: billing-api")))
+                .withRequestBody(matchingJsonPath("$.parentId", equalTo("SVC_PAGE"))));
+
+        java.util.List<com.atlas.services.ServiceModule> live =
+                relationships.findModulesFor(s.getId());
+        java.util.Map<String, String> ids = new java.util.HashMap<>();
+        for (com.atlas.services.ServiceModule m : live) {
+            ids.put(m.modulePath(), m.confluencePageId());
+        }
+        assertThat(ids).containsEntry("", "MOD_ROOT");
+        assertThat(ids).containsEntry("billing-api", "MOD_API");
+    }
+
+    @Test
+    void whenModuleIsTombstoned_thenSyncCleansUpItsConfluencePageAndNullsTheId() {
+        wireMock.stubFor(get(urlPathEqualTo("/api/v2/spaces"))
+                .willReturn(okJson("{\"results\":[{\"id\":\"589827\",\"key\":\"ATLAS\"}]}")));
+        stubLandingPageExists();
+        wireMock.stubFor(post(urlPathEqualTo("/api/v2/pages"))
+                .willReturn(okJson("{\"id\":\"NEW_SVC_PAGE\"}")));
+
+        Service s = createService("orphan-mod-svc");
+        java.util.UUID liveObs = relationships.insertModule(s.getId(),
+                "doomed", "", "com.example", "doomed", "1.0", "jar",
+                null, null, null, "[]", "pom-xml");
+        relationships.setModuleConfluencePageId(liveObs, "DOOMED_MOD");
+        java.util.UUID tombstoneId = relationships.writeModuleTombstone(s.getId(),
+                "doomed", "pom-xml", "DOOMED_MOD");
+
+        wireMock.stubFor(delete(urlPathEqualTo("/api/v2/pages/DOOMED_MOD"))
+                .willReturn(aResponse().withStatus(204)));
+
+        coordinator.syncAll();
+
+        wireMock.verify(deleteRequestedFor(urlPathEqualTo("/api/v2/pages/DOOMED_MOD")));
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM service_modules WHERE id = ? AND presence = 'absent' " +
+                        "AND confluence_page_id IS NULL",
+                Long.class, tombstoneId);
+        assertThat(count).isEqualTo(1L);
+    }
+
     private Service createService(String name) {
         Service s = new Service();
         s.setName(name);

@@ -3,9 +3,13 @@ package com.atlas.codesync;
 import com.atlas.services.ApiSummary;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceMetadata;
+import com.atlas.services.ServiceModule;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
 import com.atlas.services.TestScenario;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -198,13 +202,23 @@ public class CodeSyncCoordinator {
         if (pomFile.isEmpty()) {
             return CodeSyncResult.empty();
         }
-        PomFacts facts = pomParser.parse(pomFile.get().content());
+        PomFacts rootFacts = pomParser.parse(pomFile.get().content());
+
+        // Walk the <modules> tree starting from the root pom. Each visited
+        // module observation is added to `walk` keyed by its module_path
+        // (relative to the service root). Failures on individual sub-poms
+        // (404, malformed) are skipped with a log; the rest of the tree
+        // still gets observed.
+        Map<String, ModuleObservation> walk = new LinkedHashMap<>();
+        walkModuleTree(coords.owner(), coords.repo(), service, "", null, rootFacts, walk);
 
         int created = 0;
         int deleted = 0;
 
-        // ----- service_metadata: append-only diff -----
-        Map<String, String> freshMetadata = freshMetadataFromFacts(facts);
+        // ----- service_metadata: append-only diff (root pom only — service-level
+        // metadata stays sourced from the root pom; sub-module overrides live
+        // on service_modules and are surfaced on the L4 module pages).
+        Map<String, String> freshMetadata = freshMetadataFromFacts(rootFacts);
         Map<String, ServiceMetadata> liveMetadata = new HashMap<>();
         for (ServiceMetadata m : relationships.findServiceMetadataFor(serviceId)) {
             if (POM_SOURCE.equals(m.source())) {
@@ -223,14 +237,47 @@ public class CodeSyncCoordinator {
             deleted++;
         }
 
-        // ----- external dependencies: append-only diff -----
-        // Live view of pom-source external-dep observations, keyed by
-        // external_dependency_id (the durable identity for a dep).
+        // ----- service_modules: append-only diff against the walked tree.
+        Map<String, ServiceModule> liveModules = new HashMap<>();
+        for (ServiceModule sm : relationships.findModulesFor(serviceId)) {
+            if (POM_SOURCE.equals(sm.source())) {
+                liveModules.put(sm.modulePath(), sm);
+            }
+        }
+        for (ModuleObservation obs : walk.values()) {
+            ServiceModule current = liveModules.remove(obs.modulePath);
+            if (current == null) {
+                relationships.insertModule(serviceId, obs.modulePath, obs.parentPath,
+                        obs.groupId, obs.artifactId, obs.version, obs.packaging,
+                        obs.languageVersion, obs.framework, obs.frameworkVersion,
+                        obs.declaredDeps, POM_SOURCE);
+                created++;
+            } else if (moduleChanged(current, obs)) {
+                relationships.insertModule(serviceId, obs.modulePath, obs.parentPath,
+                        obs.groupId, obs.artifactId, obs.version, obs.packaging,
+                        obs.languageVersion, obs.framework, obs.frameworkVersion,
+                        obs.declaredDeps, POM_SOURCE,
+                        "present", current.confluencePageId());
+                created++;
+            }
+            // No-op: live module matches fresh.
+        }
+        for (ServiceModule stale : liveModules.values()) {
+            relationships.writeModuleTombstone(serviceId, stale.modulePath(), POM_SOURCE,
+                    stale.confluencePageId());
+            deleted++;
+        }
+
+        // ----- external dependencies: append-only diff (root-pom-only path).
+        // A multi-module service that wants service-level deps to reflect
+        // every sub-module's declarations should union from the tree — listed
+        // as a Phase 5.6 polish carry-over in the M2 reflection. For Atlas's
+        // dogfood (each service is a leaf), root-only is the complete set.
         Set<UUID> livePomExtDepIds = new HashSet<>(
                 relationships.findLiveExternalDepsForService(serviceId, POM_SOURCE));
 
         Map<String, UUID> resolvedDepIds = new LinkedHashMap<>(); // groupId:artifactId -> ext_dep id
-        for (DependencyCoords dep : facts.dependencies()) {
+        for (DependencyCoords dep : rootFacts.dependencies()) {
             if (dep.groupId() == null || dep.artifactId() == null) continue;
             if (orgGroupPrefix != null && !orgGroupPrefix.isBlank()
                     && dep.groupId().startsWith(orgGroupPrefix)) continue;
@@ -256,6 +303,123 @@ public class CodeSyncCoordinator {
                     "pom.xml refresh: created=" + created + " deleted=" + deleted);
         }
         return new CodeSyncResult(created, 0, deleted, 0);
+    }
+
+    /**
+     * Walk the Maven module tree rooted at the given parsed pom. The root
+     * call passes the already-parsed {@code rootFacts} and an empty
+     * {@code currentPath}; recursive calls fetch each child pom from
+     * GitHub and recurse into its modules.
+     *
+     * <p>{@code currentPath} is the module's path RELATIVE to the service
+     * root (i.e. relative to {@code services.module_path}). Empty string
+     * for the root module of the service.
+     */
+    private void walkModuleTree(String owner, String repo, Service service,
+                                String currentPath, String parentPath,
+                                PomFacts facts, Map<String, ModuleObservation> walk) {
+        walk.put(currentPath, new ModuleObservation(
+                currentPath,
+                parentPath,
+                facts.groupId(),
+                facts.artifactId(),
+                facts.version(),
+                facts.packaging(),
+                facts.languageVersion(),
+                facts.framework(),
+                facts.frameworkVersion(),
+                serializeDeps(facts.dependencies())));
+        if (facts.modules() == null || facts.modules().isEmpty()) return;
+        for (String submodule : facts.modules()) {
+            String childPath = joinModulePath(currentPath, submodule);
+            String childPomPath = joinPath(joinPath(serviceModulePathPrefix(service), childPath), "pom.xml");
+            try {
+                Optional<RepoFile> childFile = repoFetcher.fetchFile(owner, repo, childPomPath);
+                if (childFile.isEmpty()) {
+                    log.warn("Sub-module pom not found: {} (parent: {})", childPomPath, currentPath);
+                    continue;
+                }
+                PomFacts childFacts = pomParser.parse(childFile.get().content());
+                walkModuleTree(owner, repo, service, childPath, currentPath, childFacts, walk);
+            } catch (RuntimeException e) {
+                log.warn("Skipping unparseable sub-module pom {}: {}", childPomPath, e.getMessage());
+            }
+        }
+    }
+
+    private static String joinModulePath(String parent, String child) {
+        if (parent == null || parent.isEmpty()) return child;
+        return parent + "/" + child;
+    }
+
+    private static String joinPath(String a, String b) {
+        if (a == null || a.isEmpty()) return b;
+        if (a.endsWith("/")) return a + b;
+        return a + "/" + b;
+    }
+
+    /**
+     * Path prefix to prepend to a module's relative path to fetch its pom from
+     * the repo. For services rooted at the repo root ({@code services.module_path}
+     * null/blank), this is empty. For services rooted in a sub-directory
+     * (e.g. {@code "services/billing"}), this prefix carries that.
+     */
+    private static String serviceModulePathPrefix(Service service) {
+        String module = service.getModulePath();
+        if (module == null || module.isBlank()) return "";
+        return module.endsWith("/") ? module.substring(0, module.length() - 1) : module;
+    }
+
+    /**
+     * Serialize a list of declared deps to a JSON array of {@code "groupId:artifactId"}
+     * strings for storage in {@code service_modules.declared_deps}. Returns
+     * {@code "[]"} when there are no deps; that's distinguishable from null
+     * (no observation captured).
+     */
+    private static String serializeDeps(List<DependencyCoords> deps) {
+        List<String> coords = new ArrayList<>(deps.size());
+        for (DependencyCoords d : deps) {
+            if (d.groupId() == null || d.artifactId() == null) continue;
+            coords.add(d.groupId() + ":" + d.artifactId());
+        }
+        try {
+            return DEPS_MAPPER.writeValueAsString(coords);
+        } catch (JsonProcessingException e) {
+            return "[]";
+        }
+    }
+
+    private static final ObjectMapper DEPS_MAPPER = new ObjectMapper()
+            .setSerializationInclusion(JsonInclude.Include.NON_NULL);
+
+    private static boolean moduleChanged(ServiceModule current, ModuleObservation fresh) {
+        return !equalsNullable(current.parentPath(), fresh.parentPath)
+                || !equalsNullable(current.groupId(), fresh.groupId)
+                || !equalsNullable(current.artifactId(), fresh.artifactId)
+                || !equalsNullable(current.version(), fresh.version)
+                || !equalsNullable(current.packaging(), fresh.packaging)
+                || !equalsNullable(current.languageVersion(), fresh.languageVersion)
+                || !equalsNullable(current.framework(), fresh.framework)
+                || !equalsNullable(current.frameworkVersion(), fresh.frameworkVersion)
+                || !equalsNullable(current.declaredDeps(), fresh.declaredDeps);
+    }
+
+    /**
+     * Internal carrier for one module observation built during the walk —
+     * keeps {@link #refreshPom} out of the business of constructing the
+     * many-arg {@code insertModule} call inline.
+     */
+    private record ModuleObservation(
+            String modulePath,
+            String parentPath,
+            String groupId,
+            String artifactId,
+            String version,
+            String packaging,
+            String languageVersion,
+            String framework,
+            String frameworkVersion,
+            String declaredDeps) {
     }
 
     private static String pomPathFor(Service service) {

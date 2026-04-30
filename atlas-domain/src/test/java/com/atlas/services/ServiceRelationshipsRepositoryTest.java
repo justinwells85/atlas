@@ -210,6 +210,94 @@ class ServiceRelationshipsRepositoryTest {
         assertThat(rows.get(0).openapiSnapshot()).isEqualTo("{\"v\":2}");
     }
 
+    // ---- service_modules (Phase 5.6 M2) -----------------------------------
+
+    @Test
+    void whenModuleIsInserted_thenLiveViewReturnsItWithFullCoords() {
+        Service svc = save("module-svc", "team");
+
+        relationships.insertModule(svc.getId(),
+                "billing-api", "",
+                "com.example", "billing-api", "1.0.0", "jar",
+                "21", "Spring Boot", "4.0.6",
+                "[\"org.springframework.boot:spring-boot-starter-web\"]",
+                "pom-xml");
+
+        List<ServiceModule> rows = relationships.findModulesFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        ServiceModule m = rows.get(0);
+        assertThat(m.modulePath()).isEqualTo("billing-api");
+        assertThat(m.parentPath()).isEqualTo("");
+        assertThat(m.groupId()).isEqualTo("com.example");
+        assertThat(m.artifactId()).isEqualTo("billing-api");
+        assertThat(m.version()).isEqualTo("1.0.0");
+        assertThat(m.packaging()).isEqualTo("jar");
+        assertThat(m.languageVersion()).isEqualTo("21");
+        assertThat(m.framework()).isEqualTo("Spring Boot");
+        assertThat(m.frameworkVersion()).isEqualTo("4.0.6");
+        assertThat(m.declaredDeps()).contains("spring-boot-starter-web");
+        assertThat(m.source()).isEqualTo("pom-xml");
+    }
+
+    @Test
+    void whenModuleHasMultipleObservations_thenLiveViewReturnsLatest() {
+        Service svc = save("module-evolve", "team");
+
+        relationships.insertModule(svc.getId(),
+                "api", "",
+                "com.example", "api", "1.0.0", "jar",
+                "21", "Spring Boot", "4.0.6", "[]",
+                "pom-xml");
+        relationships.insertModule(svc.getId(),
+                "api", "",
+                "com.example", "api", "2.0.0", "jar",
+                "21", "Spring Boot", "4.0.6", "[]",
+                "pom-xml");
+
+        List<ServiceModule> rows = relationships.findModulesFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).version()).isEqualTo("2.0.0");
+    }
+
+    @Test
+    void whenModuleIsTombstoned_thenLiveViewExcludesIt_butStaleQuerySurfacesIt() {
+        Service svc = save("module-tombstone", "team");
+
+        UUID firstObs = relationships.insertModule(svc.getId(),
+                "api", "",
+                "com.example", "api", "1.0.0", "jar",
+                "21", null, null, "[]", "pom-xml");
+        relationships.setModuleConfluencePageId(firstObs, "PAGE_API_1");
+        relationships.writeModuleTombstone(svc.getId(), "api", "pom-xml", "PAGE_API_1");
+
+        // Live view: no longer present.
+        assertThat(relationships.findModulesFor(svc.getId())).isEmpty();
+        // Stale-pages query: surfaces the tombstone with its carried-forward page id.
+        List<SoftDeletedModulePage> stale = relationships.findStaleModulePages();
+        assertThat(stale).hasSize(1);
+        assertThat(stale.get(0).modulePath()).isEqualTo("api");
+        assertThat(stale.get(0).confluencePageId()).isEqualTo("PAGE_API_1");
+        assertThat(stale.get(0).serviceName()).isEqualTo("module-tombstone");
+    }
+
+    @Test
+    void whenModuleConfluencePageIdIsSet_thenItIsReturnedAndCanBeCleared() {
+        Service svc = save("module-page-id", "team");
+        UUID obs = relationships.insertModule(svc.getId(),
+                "", null,
+                "com.example", "root", "1.0.0", "pom",
+                null, null, null, "[]", "pom-xml");
+
+        relationships.setModuleConfluencePageId(obs, "PAGE_ROOT");
+
+        ServiceModule live = relationships.findModulesFor(svc.getId()).get(0);
+        assertThat(live.confluencePageId()).isEqualTo("PAGE_ROOT");
+
+        relationships.clearModuleConfluencePageId(obs);
+        ServiceModule afterClear = relationships.findModulesFor(svc.getId()).get(0);
+        assertThat(afterClear.confluencePageId()).isNull();
+    }
+
     private Service save(String name, String ownerTeam) {
         Service s = new Service();
         s.setName(name);

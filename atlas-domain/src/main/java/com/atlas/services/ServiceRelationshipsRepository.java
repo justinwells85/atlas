@@ -361,6 +361,141 @@ public class ServiceRelationshipsRepository {
                 pageId, serviceId);
     }
 
+    // --- service_modules (Phase 5.6 M2 — append-only from day one) -----
+
+    /**
+     * Append one module observation. Defaults to {@code presence='present'}
+     * with no Confluence page id yet. {@code modulePath} must be non-null
+     * — pass {@code ""} for the root module of the service.
+     */
+    public UUID insertModule(UUID serviceId, String modulePath, String parentPath,
+                             String groupId, String artifactId, String version,
+                             String packaging, String languageVersion, String framework,
+                             String frameworkVersion, String declaredDeps, String source) {
+        return insertModule(serviceId, modulePath, parentPath, groupId, artifactId, version,
+                packaging, languageVersion, framework, frameworkVersion, declaredDeps,
+                source, "present", null);
+    }
+
+    public UUID insertModule(UUID serviceId, String modulePath, String parentPath,
+                             String groupId, String artifactId, String version,
+                             String packaging, String languageVersion, String framework,
+                             String frameworkVersion, String declaredDeps, String source,
+                             String presence, String confluencePageId) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO service_modules " +
+                        "(id, service_id, module_path, parent_path, group_id, artifact_id, version, " +
+                        " packaging, language_version, framework, framework_version, declared_deps, " +
+                        " source, presence, confluence_page_id) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                id, serviceId, modulePath, parentPath, groupId, artifactId, version,
+                packaging, languageVersion, framework, frameworkVersion, declaredDeps,
+                source, presence, confluencePageId);
+        return id;
+    }
+
+    /**
+     * Append a {@code presence='absent'} tombstone for a module that's no
+     * longer present in the upstream pom tree. Carries forward the previous
+     * {@code confluence_page_id} so the cleanup pass can delete the orphan
+     * Confluence page.
+     */
+    public UUID writeModuleTombstone(UUID serviceId, String modulePath, String source,
+                                     String confluencePageId) {
+        return insertModule(serviceId, modulePath, null, null, null, null, null, null,
+                null, null, null, source, "absent", confluencePageId);
+    }
+
+    /**
+     * Live view: latest observation per {@code (service_id, module_path, source)}
+     * for the service, filtered to {@code presence='present'}. Tombstones
+     * and superseded observations are excluded.
+     */
+    public List<ServiceModule> findModulesFor(UUID serviceId) {
+        return jdbc.query(
+                liveModulesSql() + " AND service_id = ? ORDER BY module_path",
+                (rs, i) -> mapModule(rs),
+                serviceId);
+    }
+
+    /** Stamp the Confluence page id on one module observation row after the page is created. */
+    public void setModuleConfluencePageId(UUID moduleObservationId, String confluencePageId) {
+        jdbc.update(
+                "UPDATE service_modules SET confluence_page_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                confluencePageId, moduleObservationId);
+    }
+
+    /** Null a module observation row's confluence_page_id. Used by the cleanup pass after the page is gone. */
+    public void clearModuleConfluencePageId(UUID moduleObservationId) {
+        jdbc.update("UPDATE service_modules SET confluence_page_id = NULL WHERE id = ?",
+                moduleObservationId);
+    }
+
+    /**
+     * Tombstoned module rows whose Confluence pages still need removing:
+     * latest observation per key is {@code presence='absent'} and carries a
+     * non-null {@code confluence_page_id}. Bypasses the live-only filter.
+     * Mirrors {@link #findStaleApiPages()} at the module grain.
+     */
+    public List<SoftDeletedModulePage> findStaleModulePages() {
+        return jdbc.query(
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, module_path, source, presence, confluence_page_id, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, module_path, source " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM service_modules " +
+                        ") " +
+                        "SELECT l.id, l.module_path, l.confluence_page_id, " +
+                        "       s.id AS service_id, s.name AS service_name " +
+                        "FROM latest l " +
+                        "JOIN services s ON s.id = l.service_id " +
+                        "WHERE l.rn = 1 AND l.presence = 'absent' " +
+                        "  AND l.confluence_page_id IS NOT NULL " +
+                        "  AND s.deleted_at IS NULL " +
+                        "ORDER BY s.name, l.module_path",
+                (rs, i) -> new SoftDeletedModulePage(
+                        (UUID) rs.getObject("id"),
+                        rs.getString("module_path"),
+                        rs.getString("confluence_page_id"),
+                        (UUID) rs.getObject("service_id"),
+                        rs.getString("service_name")));
+    }
+
+    private static String liveModulesSql() {
+        return "WITH latest AS (" +
+                "  SELECT id, service_id, module_path, parent_path, group_id, artifact_id, version, " +
+                "         packaging, language_version, framework, framework_version, declared_deps, " +
+                "         source, presence, confluence_page_id, " +
+                "         ROW_NUMBER() OVER (PARTITION BY service_id, module_path, source " +
+                "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                "  FROM service_modules " +
+                ") " +
+                "SELECT id, service_id, module_path, parent_path, group_id, artifact_id, version, " +
+                "       packaging, language_version, framework, framework_version, declared_deps, " +
+                "       source, confluence_page_id " +
+                "FROM latest " +
+                "WHERE rn = 1 AND presence = 'present'";
+    }
+
+    private static ServiceModule mapModule(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new ServiceModule(
+                (UUID) rs.getObject("id"),
+                (UUID) rs.getObject("service_id"),
+                rs.getString("module_path"),
+                rs.getString("parent_path"),
+                rs.getString("group_id"),
+                rs.getString("artifact_id"),
+                rs.getString("version"),
+                rs.getString("packaging"),
+                rs.getString("language_version"),
+                rs.getString("framework"),
+                rs.getString("framework_version"),
+                rs.getString("declared_deps"),
+                rs.getString("source"),
+                rs.getString("confluence_page_id"));
+    }
+
     /** Insert one row in {@code api_consumers} linking an API to a consumer service. */
     public void insertApiConsumer(UUID apiId, UUID consumerServiceId, String description) {
         jdbc.update(

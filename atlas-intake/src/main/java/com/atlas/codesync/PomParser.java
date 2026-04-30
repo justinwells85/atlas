@@ -55,11 +55,13 @@ public class PomParser {
                 parentGroup,
                 parentArtifact,
                 parentVersion,
+                model.getPackaging() != null ? model.getPackaging() : "jar",
                 "Java",
                 props.getProperty("java.version"),
                 framework,
                 frameworkVersion,
                 "Maven",
+                model.getModules() != null ? List.copyOf(model.getModules()) : List.of(),
                 toCoords(model.getDependencies()));
     }
 

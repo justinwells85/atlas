@@ -584,6 +584,137 @@ class CodeSyncCoordinatorTest {
     }
 
     @Test
+    void whenPomIsRefreshed_thenAtLeastOneServiceModuleRowIsPersisted() {
+        Service s = saveServiceWithRepo("mod-svc", "https://github.com/o/r", null);
+        stubGithubFile("/repos/o/r/contents/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <groupId>com.example</groupId>
+                    <artifactId>leaf-svc</artifactId>
+                    <version>1.0.0</version>
+                </project>
+                """);
+
+        coordinator.refreshPom(s.getId());
+
+        java.util.List<com.atlas.services.ServiceModule> modules =
+                relationships.findModulesFor(s.getId());
+        assertThat(modules).hasSize(1);
+        assertThat(modules.get(0).modulePath()).isEqualTo(""); // root
+        assertThat(modules.get(0).artifactId()).isEqualTo("leaf-svc");
+        assertThat(modules.get(0).source()).isEqualTo("pom-xml");
+    }
+
+    @Test
+    void whenPomDeclaresSubModules_thenChildPomsAreFetchedAndModuleRowsArePersisted() {
+        Service s = saveServiceWithRepo("multi-mod-svc", "https://github.com/o/r", null);
+        stubGithubFile("/repos/o/r/contents/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <groupId>com.example</groupId>
+                    <artifactId>billing-parent</artifactId>
+                    <version>1.0.0</version>
+                    <packaging>pom</packaging>
+                    <modules>
+                        <module>billing-api</module>
+                        <module>billing-core</module>
+                    </modules>
+                </project>
+                """);
+        stubGithubFile("/repos/o/r/contents/billing-api/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <groupId>com.example</groupId>
+                    <artifactId>billing-api</artifactId>
+                    <version>1.0.0</version>
+                </project>
+                """);
+        stubGithubFile("/repos/o/r/contents/billing-core/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <groupId>com.example</groupId>
+                    <artifactId>billing-core</artifactId>
+                    <version>1.0.0</version>
+                </project>
+                """);
+
+        coordinator.refreshPom(s.getId());
+
+        java.util.List<com.atlas.services.ServiceModule> modules =
+                relationships.findModulesFor(s.getId());
+        assertThat(modules).extracting(com.atlas.services.ServiceModule::modulePath)
+                .containsExactlyInAnyOrder("", "billing-api", "billing-core");
+        assertThat(modules).filteredOn(m -> "billing-api".equals(m.modulePath()))
+                .extracting(com.atlas.services.ServiceModule::parentPath)
+                .containsExactly("");
+        assertThat(modules).filteredOn(m -> "".equals(m.modulePath()))
+                .extracting(com.atlas.services.ServiceModule::packaging)
+                .containsExactly("pom");
+    }
+
+    @Test
+    void whenSubModuleDisappearsBetweenRuns_thenItIsTombstonedOnNextRefresh() {
+        Service s = saveServiceWithRepo("shrinking-mod-svc", "https://github.com/o/r", null);
+        // First refresh: parent declares two sub-modules.
+        stubGithubFile("/repos/o/r/contents/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>parent</artifactId>
+                    <packaging>pom</packaging>
+                    <modules>
+                        <module>kept</module>
+                        <module>removed</module>
+                    </modules>
+                </project>
+                """);
+        stubGithubFile("/repos/o/r/contents/kept/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>kept</artifactId>
+                </project>
+                """);
+        stubGithubFile("/repos/o/r/contents/removed/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>removed</artifactId>
+                </project>
+                """);
+        coordinator.refreshPom(s.getId());
+        assertThat(relationships.findModulesFor(s.getId())).hasSize(3);
+
+        // Second refresh: parent only declares one sub-module now.
+        wireMock.resetAll();
+        stubGithubFile("/repos/o/r/contents/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>parent</artifactId>
+                    <packaging>pom</packaging>
+                    <modules>
+                        <module>kept</module>
+                    </modules>
+                </project>
+                """);
+        stubGithubFile("/repos/o/r/contents/kept/pom.xml", """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>kept</artifactId>
+                </project>
+                """);
+
+        coordinator.refreshPom(s.getId());
+
+        java.util.List<com.atlas.services.ServiceModule> live =
+                relationships.findModulesFor(s.getId());
+        assertThat(live).extracting(com.atlas.services.ServiceModule::modulePath)
+                .containsExactlyInAnyOrder("", "kept");
+        // The removed module is tombstoned but excluded from the live view.
+        Long absentRows = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM service_modules WHERE service_id = ? AND presence = 'absent' AND module_path = ?",
+                Long.class, s.getId(), "removed");
+        assertThat(absentRows).isEqualTo(1L);
+    }
+
+    @Test
     void whenPomIsRefreshedTwiceWithSameContent_thenSecondRunIsNoop() {
         Service s = saveServiceWithRepo("idem-pom", "https://github.com/o/r", null);
         String pom = """

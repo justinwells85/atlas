@@ -159,4 +159,54 @@ class PomParserTest {
 
         assertThat(parser.parse(pom).dependencies()).isEmpty();
     }
+
+    // ---- Phase 5.6 M2: <modules> + packaging ----------------------------
+
+    @Test
+    void whenPomDeclaresModules_thenModulesAreReturnedInDeclarationOrder() {
+        String pom = """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <groupId>com.example</groupId>
+                    <artifactId>multi-mod</artifactId>
+                    <version>1.0.0</version>
+                    <packaging>pom</packaging>
+                    <modules>
+                        <module>billing-api</module>
+                        <module>billing-core</module>
+                        <module>billing-persistence</module>
+                    </modules>
+                </project>
+                """;
+
+        PomFacts facts = parser.parse(pom);
+
+        assertThat(facts.modules())
+                .containsExactly("billing-api", "billing-core", "billing-persistence");
+        assertThat(facts.packaging()).isEqualTo("pom");
+    }
+
+    @Test
+    void whenPomHasNoModules_thenModulesListIsEmpty() {
+        String pom = """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>leaf-svc</artifactId>
+                </project>
+                """;
+
+        assertThat(parser.parse(pom).modules()).isEmpty();
+    }
+
+    @Test
+    void whenPomDoesNotDeclarePackaging_thenPackagingDefaultsToJar() {
+        String pom = """
+                <project xmlns="http://maven.apache.org/POM/4.0.0">
+                    <modelVersion>4.0.0</modelVersion>
+                    <artifactId>plain</artifactId>
+                </project>
+                """;
+
+        assertThat(parser.parse(pom).packaging()).isEqualTo("jar");
+    }
 }
