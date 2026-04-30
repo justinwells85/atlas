@@ -80,6 +80,18 @@ Closes DD-011 entirely. ADR-014 documents the soft-delete pattern.
 - [x] Verify update path: change a field, re-sync, confirm Confluence reflects change — exercised on `atlas-intake` in Phase 5.5 M5: description swapped to a verification marker (sync → page v2 reflects), restored to original (sync → page v3 reflects). Two-way update path proven.
 - [x] Document any rough edges discovered — DD-005, DD-008, DD-010 captured in `docs/deferred-decisions.md`
 
+## Phase 5.6 — Drill-down depth (L3–L5)
+
+Goal: extend the Confluence space so a newcomer can drill from the landing page down to a single class's public method signatures without leaving the wiki. Surfaces the depth of Atlas's data model in stakeholder demos. Plan: `docs/plans/2026-04-29-drill-down-l3-l5.md`.
+
+- [ ] L3 — schema-level API detail on per-endpoint pages (parameters, request body, responses, examples)
+- [ ] L4 — Maven module tree: per-module Confluence pages parented under each service
+- [ ] L5 — Spring bean / class index: one Beans page per service with stereotype-grouped public methods
+- [ ] L2 service page acquires an "Internals" cross-reference section linking L3/L4/L5/Tests
+- [ ] Dogfood: all three Atlas modules render the full L1→L5 drill-down end-to-end
+
+Closes by phase boundary: a stakeholder can open the landing page and walk top-down into any method of any service in three clicks. Phase 6 demo is the reader-acceptance test.
+
 ## Phase 6 — Demo and Handoff
 
 - [ ] Demo the working prototype to stakeholders
