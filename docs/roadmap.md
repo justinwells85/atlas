@@ -90,12 +90,26 @@ Goal: extend the Confluence space so a newcomer can drill from the landing page 
 - [x] L2 service page acquires an "Internals" cross-reference section linking L3/L4/L5/Tests
 - [x] Dogfood: all three Atlas modules render the full L1→L5 drill-down end-to-end
 
-**Phase 5.6 is closed.** Verified live in the ATLAS Confluence space: every service page's Section 8 "Internals" block links its L4 module pages, L5 Beans page, Tests page, and L3 endpoint pages. The landing page carries a "How to read this space" preamble. Phase 6 demo is the reader-acceptance test.
+**Phase 5.6 is closed.** Verified live in the ATLAS Confluence space: every service page's Section 8 "Internals" block links its L4 module pages, L5 Beans page, Tests page, and L3 endpoint pages. The landing page carries a "How to read this space" preamble.
 
-## Phase 6 — Demo and Handoff
+## Phase 5.7 — Spring Integration drill-down
 
-- [ ] Demo the working prototype to stakeholders
-- [ ] Produce `docs/deferred-decisions.md` capturing prototype shortcuts the production team must address: auth model, network binding (`127.0.0.1`-only today), session-state strategy, secret handling, JSON-filter-in-Java pattern (ADR-010 escape hatch), and anything else surfaced during Phases 3–5
+Goal: extend Atlas so it can describe a Spring Integration service at the same granularity Phase 5.6 achieved for vanilla Spring services. The user's organization runs ~12 services on Spring Integration; Phase 5.6's L5 Beans extractor misses the framework's most interesting structure (`IntegrationFlow` DSL chains, `MessageChannel` beans, `@MessagingGateway` interfaces). Without this phase, a stakeholder demo against one of those services renders thin pages. Plan: `docs/plans/2026-04-30-spring-integration-drill-down.md`.
+
+- [ ] M0 — Discovery: identify target work-org SI service, scope annotation/DSL mix, resolve private-repo auth (DD-014)
+- [ ] M1 — Annotation endpoints + `@MessagingGateway` interfaces (V25 + V26 + extractors + coordinator + REST endpoint)
+- [ ] M2 — `@Bean MessageChannel` definitions + `IntegrationFlow` DSL parser with project-level cross-file channel resolution (V27 + V28)
+- [ ] M3 — Per-service Flows page (mermaid graph per flow) + L2 Section 8 "Internals" Flows sub-bullet
+- [ ] M4 — Re-point Atlas at target SI service; granularity validation; demo script update
+
+Closes by phase boundary: a stakeholder can open the target service's Confluence page and walk down to per-channel / per-flow / per-handler detail. Phase 6 stakeholder demo uses this artifact to win buy-in for org-wide rollout to all 12 services.
+
+## Phase 6 — Stakeholder Demo and Handoff
+
+Demo the L1→L5 + Spring Integration drill-down to internal stakeholders, using a real work-org Spring Integration service as the demo subject. Goal: win support for rolling Atlas out to the other 11 services and beyond.
+
+- [ ] Run the granular Confluence walkthrough against the Phase 5.7 demo subject
+- [ ] Produce `docs/deferred-decisions.md` capturing prototype shortcuts the production team must address: auth model, network binding (`127.0.0.1`-only today), session-state strategy, secret handling, JSON-filter-in-Java pattern (ADR-010 escape hatch), and anything else surfaced during Phases 3–5.7
 - [ ] Document AWS migration plan (RDS, deployment, secrets management)
 - [ ] Handoff packet for the team taking it to production
 
