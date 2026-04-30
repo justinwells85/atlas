@@ -84,13 +84,13 @@ Closes DD-011 entirely. ADR-014 documents the soft-delete pattern.
 
 Goal: extend the Confluence space so a newcomer can drill from the landing page down to a single class's public method signatures without leaving the wiki. Surfaces the depth of Atlas's data model in stakeholder demos. Plan: `docs/plans/2026-04-29-drill-down-l3-l5.md`.
 
-- [ ] L3 — schema-level API detail on per-endpoint pages (parameters, request body, responses, examples)
-- [ ] L4 — Maven module tree: per-module Confluence pages parented under each service
-- [ ] L5 — Spring bean / class index: one Beans page per service with stereotype-grouped public methods
-- [ ] L2 service page acquires an "Internals" cross-reference section linking L3/L4/L5/Tests
-- [ ] Dogfood: all three Atlas modules render the full L1→L5 drill-down end-to-end
+- [x] L3 — schema-level API detail on per-endpoint pages (parameters, request body, responses, examples)
+- [x] L4 — Maven module tree: per-module Confluence pages parented under each service
+- [x] L5 — Spring bean / class index: one Beans page per service with stereotype-grouped public methods
+- [x] L2 service page acquires an "Internals" cross-reference section linking L3/L4/L5/Tests
+- [x] Dogfood: all three Atlas modules render the full L1→L5 drill-down end-to-end
 
-Closes by phase boundary: a stakeholder can open the landing page and walk top-down into any method of any service in three clicks. Phase 6 demo is the reader-acceptance test.
+**Phase 5.6 is closed.** Verified live in the ATLAS Confluence space: every service page's Section 8 "Internals" block links its L4 module pages, L5 Beans page, Tests page, and L3 endpoint pages. The landing page carries a "How to read this space" preamble. Phase 6 demo is the reader-acceptance test.
 
 ## Phase 6 — Demo and Handoff
 

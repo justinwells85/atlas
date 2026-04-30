@@ -7,6 +7,7 @@ import com.atlas.services.ExternalDependencyUsage;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceDependencyEdge;
 import com.atlas.services.ServiceMetadata;
+import com.atlas.services.ServiceModule;
 import com.atlas.services.ServiceStatus;
 import org.springframework.stereotype.Component;
 
@@ -40,6 +41,7 @@ public class ServicePageRenderer {
         renderData(sb, ctx);
         renderOperational(sb, ctx);
         renderChangeHistory(sb, ctx);
+        renderInternals(sb, ctx);
         return sb.toString();
     }
 
@@ -413,6 +415,88 @@ public class ServicePageRenderer {
             sb.append("</li>\n");
         }
         sb.append("</ul>\n");
+    }
+
+    /**
+     * Section 8 "Internals" — the L1→L5 drill-down cross-reference block
+     * (Phase 5.6 M4). Four sub-bullets: Modules (L4), Code index (L5 Beans),
+     * Tests (per-service Tests page), Endpoints (recap of L3 endpoint pages).
+     * When a layer has no data, the bullet renders a thin note instead of
+     * disappearing — same convention as the rest of the template.
+     */
+    private void renderInternals(StringBuilder sb, ServicePageContext ctx) {
+        sb.append("<h2>Internals</h2>\n");
+
+        sb.append("<h3>Modules</h3>\n");
+        List<ServiceModule> modules = ctx.modules();
+        Map<String, String> moduleUrls = ctx.modulePageUrlsByPath();
+        if (modules == null || modules.isEmpty()) {
+            appendThinNote(sb, "No modules documented yet.");
+        } else {
+            sb.append("<ul>\n");
+            for (ServiceModule m : modules) {
+                String path = hasText(m.modulePath()) ? m.modulePath() : "(root)";
+                String url = moduleUrls == null ? null : moduleUrls.get(m.modulePath());
+                sb.append("<li>");
+                if (hasText(url)) {
+                    sb.append(renderLink(url, path));
+                } else {
+                    sb.append(escape(path));
+                }
+                if (hasText(m.artifactId())) {
+                    sb.append(" — ").append(escape(coordinatesSummary(m)));
+                }
+                sb.append("</li>\n");
+            }
+            sb.append("</ul>\n");
+        }
+
+        sb.append("<h3>Code index</h3>\n");
+        if (hasText(ctx.beansPageUrl())) {
+            sb.append("<p>")
+                    .append(renderLink(ctx.beansPageUrl(), "Beans (Spring stereotype classes)"))
+                    .append("</p>\n");
+        } else {
+            appendThinNote(sb, "No code index documented yet.");
+        }
+
+        sb.append("<h3>Tests</h3>\n");
+        if (hasText(ctx.testsPageUrl())) {
+            sb.append("<p>")
+                    .append(renderLink(ctx.testsPageUrl(), "Test scenarios"))
+                    .append("</p>\n");
+        } else {
+            appendThinNote(sb, "No tests documented yet.");
+        }
+
+        sb.append("<h3>Endpoints</h3>\n");
+        List<ApiPresentation> endpointsWithUrls = ctx.apis().stream()
+                .filter(p -> hasText(p.endpointPageUrl()))
+                .toList();
+        if (endpointsWithUrls.isEmpty()) {
+            appendThinNote(sb, "No endpoints documented yet.");
+        } else {
+            sb.append("<ul>\n");
+            for (ApiPresentation pres : endpointsWithUrls) {
+                String label = pres.api().method() + " " + pres.api().path();
+                sb.append("<li>")
+                        .append(renderLink(pres.endpointPageUrl(), label))
+                        .append("</li>\n");
+            }
+            sb.append("</ul>\n");
+        }
+    }
+
+    private static String coordinatesSummary(ServiceModule m) {
+        StringBuilder cs = new StringBuilder();
+        if (m.groupId() != null && !m.groupId().isBlank()) {
+            cs.append(m.groupId()).append(":");
+        }
+        cs.append(m.artifactId() == null ? "" : m.artifactId());
+        if (m.version() != null && !m.version().isBlank()) {
+            cs.append(":").append(m.version());
+        }
+        return cs.toString();
     }
 
     // ---- Helpers ---------------------------------------------------------

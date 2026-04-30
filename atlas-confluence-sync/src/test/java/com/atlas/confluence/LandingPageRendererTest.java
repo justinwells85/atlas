@@ -80,6 +80,22 @@ class LandingPageRendererTest {
     }
 
     @Test
+    void whenLandingPageRenders_thenHowToReadThisSpacePreambleExplainsDrillDown() {
+        String rendered = renderer.render(List.of(), Map.of(), OffsetDateTime.now());
+
+        assertThat(rendered).contains("How to read this space");
+        // The preamble should describe each of the four drill-down destinations
+        // a service page leads to (endpoints / modules / beans / tests). Lower-cased
+        // so a future copy-edit that capitalises a heading word doesn't break this.
+        String lower = rendered.toLowerCase();
+        assertThat(lower)
+                .contains("endpoint")
+                .contains("module")
+                .contains("bean")
+                .contains("test");
+    }
+
+    @Test
     void whenServicesAreOutOfOrder_thenIndexTableSortsAlphabetically() {
         Service zzz = svc("zzz-service", "team", null, ServiceStatus.ACTIVE);
         Service aaa = svc("aaa-service", "team", null, ServiceStatus.ACTIVE);

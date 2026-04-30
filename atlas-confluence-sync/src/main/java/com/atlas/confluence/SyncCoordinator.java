@@ -227,25 +227,11 @@ public class SyncCoordinator {
 
     private void syncOneInternal(Service service, WellKnownPages pages,
                                  Map<UUID, String> servicePageUrls) {
-        ServicePageContext ctx = buildContext(service, servicePageUrls, pages.inventoryUrls());
-        String body = renderer.render(ctx);
-        String title = SERVICE_TITLE_PREFIX + service.getName();
-
-        if (service.getConfluencePageId() == null || service.getConfluencePageId().isBlank()) {
-            String pageId = confluenceClient.createPage(pages.spaceId(), title, body, pages.landingId());
-            service.setConfluencePageId(pageId);
-        } else {
-            try {
-                confluenceClient.updatePage(service.getConfluencePageId(), title, body, pages.landingId());
-            } catch (ConfluencePageNotFoundException e) {
-                log.info("Confluence page {} for service {} no longer exists; creating fresh page.",
-                        service.getConfluencePageId(), service.getName());
-                String newPageId = confluenceClient.createPage(pages.spaceId(), title, body, pages.landingId());
-                service.setConfluencePageId(newPageId);
-            }
-        }
-        service.setLastSyncedToConfluence(OffsetDateTime.now());
-        serviceRepository.save(service);
+        // Pass 1: create-or-update the L2 service page so child pages have a
+        // parent id to nest under. Section 8 "Internals" will render with
+        // whatever cross-link state currently exists (often empty on first
+        // sync of a fresh service).
+        renderAndUpsertServicePage(service, pages, servicePageUrls);
 
         // Per-endpoint pages: each api row gets its own Confluence page, parented
         // under the service page just persisted. Per-endpoint failures are caught
@@ -265,6 +251,44 @@ public class SyncCoordinator {
         // rendered, even when the service has no stereotype classes yet,
         // for sidebar-tree consistency. Same lifecycle as the Tests page.
         syncBeansPage(service);
+
+        // Pass 2: re-render the L2 service page so Section 8 "Internals"
+        // picks up the page ids assigned by the child syncs above (modules,
+        // tests, beans). Mirrors the two-pass lifecycle used for L4 module
+        // pages. One extra Confluence PUT per service per sync — cheap, and
+        // removes the "first sync renders thin notes, second sync fills
+        // them in" eventual-consistency artifact for the drill-down.
+        renderAndUpsertServicePage(service, pages, servicePageUrls);
+    }
+
+    /**
+     * Render the L2 service page from current DB state and either create it
+     * (first time) or update it (subsequent calls). Used by both passes of
+     * {@link #syncOneInternal}: pass 1 establishes the parent page id for
+     * child syncs; pass 2 re-renders so Section 8 "Internals" reflects the
+     * page ids those child syncs just persisted.
+     */
+    private void renderAndUpsertServicePage(Service service, WellKnownPages pages,
+                                            Map<UUID, String> servicePageUrls) {
+        ServicePageContext ctx = buildContext(service, servicePageUrls, pages.inventoryUrls());
+        String body = renderer.render(ctx);
+        String title = SERVICE_TITLE_PREFIX + service.getName();
+
+        if (service.getConfluencePageId() == null || service.getConfluencePageId().isBlank()) {
+            String pageId = confluenceClient.createPage(pages.spaceId(), title, body, pages.landingId());
+            service.setConfluencePageId(pageId);
+        } else {
+            try {
+                confluenceClient.updatePage(service.getConfluencePageId(), title, body, pages.landingId());
+            } catch (ConfluencePageNotFoundException e) {
+                log.info("Confluence page {} for service {} no longer exists; creating fresh page.",
+                        service.getConfluencePageId(), service.getName());
+                String newPageId = confluenceClient.createPage(pages.spaceId(), title, body, pages.landingId());
+                service.setConfluencePageId(newPageId);
+            }
+        }
+        service.setLastSyncedToConfluence(OffsetDateTime.now());
+        serviceRepository.save(service);
     }
 
     private void syncTestsPage(Service service) {
@@ -466,8 +490,31 @@ public class SyncCoordinator {
         List<ExternalDependencyUsage> exts = relationships.findExternalDependenciesFor(id);
         List<ServiceMetadata> metadata = relationships.findServiceMetadataFor(id);
         List<ChangeEntry> changes = relationships.findRecentChangesFor(id, RECENT_CHANGES_LIMIT);
+
+        // Phase 5.6 M4 — Internals (Section 8). Load the per-service module
+        // list and build a path → URL map for any module that already has a
+        // Confluence page id. The Beans + Tests page URLs come from the
+        // Service entity columns set by syncBeansPage / syncTestsPage on the
+        // previous sync round (or, for fresh services, after the current
+        // syncOneInternal pass below — buildContext runs first, so the very
+        // first sync renders thin notes for these and the second sync fills
+        // them in. Eventual consistency, same pattern as service-to-service
+        // hyperlinks).
+        List<ServiceModule> modules = relationships.findModulesFor(id);
+        Map<String, String> modulePageUrls = new HashMap<>();
+        for (ServiceModule m : modules) {
+            if (m.confluencePageId() != null && !m.confluencePageId().isBlank()) {
+                modulePageUrls.put(m.modulePath(), pageUrlFor(m.confluencePageId()));
+            }
+        }
+        String beansPageUrl = service.getBeansPageId() == null || service.getBeansPageId().isBlank()
+                ? null : pageUrlFor(service.getBeansPageId());
+        String testsPageUrl = service.getTestsPageId() == null || service.getTestsPageId().isBlank()
+                ? null : pageUrlFor(service.getTestsPageId());
+
         return new ServicePageContext(service, apiPresentations, upstream, downstream, dbs, exts, metadata, changes,
-                servicePageUrls, inventoryUrls);
+                servicePageUrls, inventoryUrls,
+                modules, modulePageUrls, beansPageUrl, testsPageUrl);
     }
 
     /**

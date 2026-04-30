@@ -8,6 +8,7 @@ import com.atlas.services.ExternalDependencyUsage;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceDependencyEdge;
 import com.atlas.services.ServiceMetadata;
+import com.atlas.services.ServiceModule;
 import com.atlas.services.ServiceStatus;
 import org.junit.jupiter.api.Test;
 
@@ -394,6 +395,120 @@ class ServicePageRendererTest {
         assertThat(rendered)
                 .contains("Stripe")
                 .contains("com.fasterxml.jackson.core:jackson-databind");
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 5.6 M4: Section 8 Internals (drill-down cross-reference)
+    // ------------------------------------------------------------------
+
+    @Test
+    void whenServiceHasModulesEndpointsBeansAndTests_thenInternalsSectionLinksAllFour() {
+        Service s = baseService();
+
+        ServiceModule modA = new ServiceModule(UUID.randomUUID(), s.getId(), "billing-api", "",
+                "com.example", "billing-api", "1.0", "jar",
+                null, null, null, null, "pom-xml", "MOD_A");
+        ServiceModule modB = new ServiceModule(UUID.randomUUID(), s.getId(), "billing-core", "",
+                "com.example", "billing-core", "1.0", "jar",
+                null, null, null, null, "pom-xml", "MOD_B");
+
+        ApiSummary endpoint = new ApiSummary(UUID.randomUUID(), "/v1/health", "GET",
+                null, "Health probe", "openapi", "EP1");
+        String endpointUrl = "https://example.atlassian.net/wiki/spaces/ATLAS/pages/EP1";
+        ApiPresentation endpointPres = new ApiPresentation(endpoint, List.of(), endpointUrl);
+
+        Map<String, String> moduleUrls = Map.of(
+                "billing-api", "https://example.atlassian.net/wiki/spaces/ATLAS/pages/MOD_A",
+                "billing-core", "https://example.atlassian.net/wiki/spaces/ATLAS/pages/MOD_B");
+        String beansUrl = "https://example.atlassian.net/wiki/spaces/ATLAS/pages/BEANS";
+        String testsUrl = "https://example.atlassian.net/wiki/spaces/ATLAS/pages/TESTS";
+
+        ServicePageContext ctx = new ServicePageContext(
+                s, List.of(endpointPres), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(modA, modB), moduleUrls, beansUrl, testsUrl);
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("<h2>Internals</h2>")
+                .contains("billing-api")
+                .contains("billing-core")
+                .contains("href=\"https://example.atlassian.net/wiki/spaces/ATLAS/pages/MOD_A\"")
+                .contains("href=\"https://example.atlassian.net/wiki/spaces/ATLAS/pages/MOD_B\"")
+                .contains("href=\"https://example.atlassian.net/wiki/spaces/ATLAS/pages/BEANS\"")
+                .contains("href=\"https://example.atlassian.net/wiki/spaces/ATLAS/pages/TESTS\"")
+                .contains("href=\"https://example.atlassian.net/wiki/spaces/ATLAS/pages/EP1\"");
+    }
+
+    @Test
+    void whenServiceHasNoModules_thenModulesSubBulletShowsThinNote() {
+        Service s = baseService();
+        String beansUrl = "https://example.atlassian.net/wiki/spaces/ATLAS/pages/BEANS";
+        String testsUrl = "https://example.atlassian.net/wiki/spaces/ATLAS/pages/TESTS";
+
+        ServicePageContext ctx = new ServicePageContext(
+                s, List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(), Map.of(), beansUrl, testsUrl);
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("<h2>Internals</h2>")
+                .contains("No modules documented yet.");
+    }
+
+    @Test
+    void whenServiceHasNoBeansPage_thenBeansSubBulletShowsThinNote() {
+        Service s = baseService();
+        String testsUrl = "https://example.atlassian.net/wiki/spaces/ATLAS/pages/TESTS";
+
+        ServicePageContext ctx = new ServicePageContext(
+                s, List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, testsUrl);
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("<h2>Internals</h2>")
+                .contains("No code index documented yet.");
+    }
+
+    @Test
+    void whenInternalsSectionRenders_thenLinksUseConfluencePageUrls_notSpecLinks() {
+        Service s = baseService();
+        ApiSummary endpoint = new ApiSummary(UUID.randomUUID(), "/v1/orders", "GET",
+                null, "Orders", "openapi", "EP_ORDERS");
+        String endpointUrl = "https://example.atlassian.net/wiki/spaces/ATLAS/pages/EP_ORDERS";
+        ApiPresentation pres = new ApiPresentation(endpoint, List.of(), endpointUrl);
+
+        ServiceModule m = new ServiceModule(UUID.randomUUID(), s.getId(), "core", "",
+                "com.example", "core", "1.0", "jar",
+                null, null, null, null, "pom-xml", "M1");
+        Map<String, String> moduleUrls = Map.of("core",
+                "https://example.atlassian.net/wiki/spaces/ATLAS/pages/M1");
+
+        ServicePageContext ctx = new ServicePageContext(
+                s, List.of(pres), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(m), moduleUrls,
+                "https://example.atlassian.net/wiki/spaces/ATLAS/pages/BEANS",
+                "https://example.atlassian.net/wiki/spaces/ATLAS/pages/TESTS");
+
+        String rendered = renderer.render(ctx);
+
+        int internalsIdx = rendered.indexOf("<h2>Internals</h2>");
+        assertThat(internalsIdx).isPositive();
+        String internals = rendered.substring(internalsIdx);
+
+        assertThat(internals)
+                .contains("/wiki/spaces/ATLAS/pages/")
+                .doesNotContain("github.com")
+                .doesNotContain("openapi.yaml")
+                .doesNotContain("openapi.json")
+                .doesNotContain("swagger");
     }
 
     // ------------------------------------------------------------------

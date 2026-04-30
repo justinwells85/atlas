@@ -36,6 +36,15 @@ public class LandingPageRenderer {
         sb.append("<p><strong>To add your service:</strong> run the intake interview and the page will " +
                 "appear here on the next sync (default cadence: every 15 minutes).</p>\n");
 
+        sb.append("<h3>How to read this space</h3>\n");
+        sb.append("<p>Pages drill down from this landing page. Each service page (under " +
+                "<em>Service index</em> below) carries an <strong>Internals</strong> section that " +
+                "links to four child views: <strong>Modules</strong> (one Confluence page per Maven " +
+                "sub-module), <strong>Code index</strong> (a per-service Beans page listing the " +
+                "Spring stereotype classes), <strong>Tests</strong> (a per-service test-scenarios " +
+                "page), and <strong>Endpoints</strong> (one Confluence page per API endpoint with " +
+                "parameters / request / response schemas).</p>\n");
+
         if (lastSyncAt != null) {
             sb.append("<p><strong>Last refreshed:</strong> ").append(escape(lastSyncAt.toString())).append("</p>\n");
         }
