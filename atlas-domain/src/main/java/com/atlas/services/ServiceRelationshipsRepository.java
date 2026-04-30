@@ -36,23 +36,34 @@ public class ServiceRelationshipsRepository {
      */
     public UUID insertApi(UUID serviceId, String path, String method,
                           String authMethod, String description, String source,
-                          String presence, String confluencePageId) {
+                          String presence, String confluencePageId,
+                          String openapiSnapshot) {
         UUID id = UUID.randomUUID();
         jdbc.update(
-                "INSERT INTO apis (id, service_id, path, method, auth_method, description, source, presence, confluence_page_id) " +
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                id, serviceId, path, method, authMethod, description, source, presence, confluencePageId);
+                "INSERT INTO apis (id, service_id, path, method, auth_method, description, source, presence, confluence_page_id, openapi_snapshot) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                id, serviceId, path, method, authMethod, description, source, presence,
+                confluencePageId, openapiSnapshot);
         return id;
+    }
+
+    /** Backwards-compatible overload — pre-V21 callers don't carry a snapshot. */
+    public UUID insertApi(UUID serviceId, String path, String method,
+                          String authMethod, String description, String source,
+                          String presence, String confluencePageId) {
+        return insertApi(serviceId, path, method, authMethod, description, source,
+                presence, confluencePageId, null);
     }
 
     /**
      * Convenience overload for the common "live observation, no page id yet" case.
-     * Equivalent to {@link #insertApi(UUID, String, String, String, String, String, String, String)}
+     * Equivalent to {@link #insertApi(UUID, String, String, String, String, String, String, String, String)}
      * with {@code presence='present'} and {@code confluencePageId=null}.
      */
     public UUID insertApi(UUID serviceId, String path, String method,
                           String authMethod, String description, String source) {
-        return insertApi(serviceId, path, method, authMethod, description, source, "present", null);
+        return insertApi(serviceId, path, method, authMethod, description, source,
+                "present", null, null);
     }
 
     /**
@@ -132,12 +143,13 @@ public class ServiceRelationshipsRepository {
         return jdbc.query(
                 "WITH latest AS (" +
                         "  SELECT id, service_id, path, method, auth_method, description, source, " +
-                        "         presence, confluence_page_id, " +
+                        "         presence, confluence_page_id, openapi_snapshot, " +
                         "         ROW_NUMBER() OVER (PARTITION BY service_id, method, path, source " +
                         "                            ORDER BY observed_at DESC, id DESC) AS rn " +
                         "  FROM apis " +
                         ") " +
-                        "SELECT i.id, i.path, i.method, i.auth_method, i.description, i.source, i.confluence_page_id " +
+                        "SELECT i.id, i.path, i.method, i.auth_method, i.description, i.source, " +
+                        "       i.confluence_page_id, i.openapi_snapshot " +
                         "FROM latest i " +
                         "WHERE i.rn = 1 AND i.presence = 'present' " +
                         "  AND i.source = 'intake' AND i.service_id = ? " +
@@ -166,12 +178,12 @@ public class ServiceRelationshipsRepository {
     private static String liveApisSql() {
         return "WITH latest AS (" +
                 "  SELECT id, service_id, path, method, auth_method, description, source, " +
-                "         presence, confluence_page_id, " +
+                "         presence, confluence_page_id, openapi_snapshot, " +
                 "         ROW_NUMBER() OVER (PARTITION BY service_id, method, path, source " +
                 "                            ORDER BY observed_at DESC, id DESC) AS rn " +
                 "  FROM apis " +
                 ") " +
-                "SELECT id, path, method, auth_method, description, source, confluence_page_id " +
+                "SELECT id, path, method, auth_method, description, source, confluence_page_id, openapi_snapshot " +
                 "FROM latest a " +
                 "WHERE a.rn = 1 AND a.presence = 'present'";
     }
@@ -184,7 +196,8 @@ public class ServiceRelationshipsRepository {
                 rs.getString("auth_method"),
                 rs.getString("description"),
                 rs.getString("source"),
-                rs.getString("confluence_page_id"));
+                rs.getString("confluence_page_id"),
+                rs.getString("openapi_snapshot"));
     }
 
     // --- service_test_scenarios (M3, append-only as of M3.5) -------------

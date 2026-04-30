@@ -1,11 +1,17 @@
 package com.atlas.codesync;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import io.swagger.v3.parser.OpenAPIV3Parser;
+import io.swagger.v3.parser.core.models.ParseOptions;
 import io.swagger.v3.parser.core.models.SwaggerParseResult;
 import org.springframework.stereotype.Component;
 
@@ -27,9 +33,31 @@ import java.util.Map;
 @Component
 public class SwaggerOpenApiParser implements OpenApiParser {
 
+    /**
+     * Jackson mapper used to serialize swagger-models POJOs to JSON for the
+     * per-endpoint snapshot. Swagger's models carry Jackson annotations, so
+     * a stock mapper produces faithful JSON. Sort keys for stable string
+     * comparison — the {@link CodeSyncCoordinator}'s change-detection
+     * compares snapshot strings to decide whether a new observation is
+     * needed.
+     */
+    private static final ObjectMapper SNAPSHOT_MAPPER = new ObjectMapper()
+            .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
+            // Swagger's Schema POJOs declare ~80 nullable fields each; without
+            // null-suppression a single Operation snapshot balloons into many
+            // kilobytes of mostly-null noise. Storage cost aside, the renderer
+            // just walks fields it cares about — null suppression keeps the
+            // persisted snapshot human-readable in psql.
+            .setSerializationInclusion(JsonInclude.Include.NON_NULL);
+
     @Override
     public List<EndpointRecord> parse(String specText) {
-        SwaggerParseResult result = new OpenAPIV3Parser().readContents(specText);
+        // Resolve $ref schemas inline so the snapshot is self-contained:
+        // the per-endpoint renderer never needs to look up components/schemas.
+        ParseOptions options = new ParseOptions();
+        options.setResolveFully(true);
+
+        SwaggerParseResult result = new OpenAPIV3Parser().readContents(specText, null, options);
         OpenAPI api = result.getOpenAPI();
         if (api == null) {
             throw new IllegalArgumentException(
@@ -52,14 +80,49 @@ public class SwaggerOpenApiParser implements OpenApiParser {
                 Operation operation = op.getValue();
                 String description = pickDescription(operation);
                 String authMethod = pickAuthMethod(operation, globalSecurity, securitySchemes);
+                String snapshot = buildSnapshot(operation);
                 out.add(new EndpointRecord(
                         op.getKey().name(),
                         path,
                         description,
-                        authMethod));
+                        authMethod,
+                        snapshot));
             }
         }
         return out;
+    }
+
+    /**
+     * Build a JSON snapshot of the operation's parameters, request body, and
+     * responses. Returns {@code null} when the operation has nothing
+     * snapshot-worthy — keeps intake-source-equivalent operations from
+     * carrying a wasteful empty document.
+     */
+    private static String buildSnapshot(Operation op) {
+        boolean hasParams = op.getParameters() != null && !op.getParameters().isEmpty();
+        boolean hasRequestBody = op.getRequestBody() != null;
+        boolean hasResponses = op.getResponses() != null && !op.getResponses().isEmpty();
+        if (!hasParams && !hasRequestBody && !hasResponses) {
+            return null;
+        }
+        ObjectNode root = SNAPSHOT_MAPPER.createObjectNode();
+        if (hasParams) {
+            root.set("parameters", SNAPSHOT_MAPPER.valueToTree(op.getParameters()));
+        }
+        if (hasRequestBody) {
+            root.set("requestBody", SNAPSHOT_MAPPER.valueToTree(op.getRequestBody()));
+        }
+        if (hasResponses) {
+            root.set("responses", SNAPSHOT_MAPPER.valueToTree(op.getResponses()));
+        }
+        try {
+            return SNAPSHOT_MAPPER.writeValueAsString(root);
+        } catch (JsonProcessingException jpe) {
+            // Should never happen — we built the tree from in-memory POJOs.
+            // If it does, fall back to no snapshot rather than failing the
+            // whole parse: the endpoint still gets created with method/path.
+            return null;
+        }
     }
 
     private static String pickDescription(Operation op) {

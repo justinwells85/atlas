@@ -116,6 +116,167 @@ class ApiEndpointPageRendererTest {
         assertThat(title).isEqualTo("atlas-intake — POST /api/intake/turn");
     }
 
+    // ---- L3 schema-level rendering (Phase 5.6 M1) ----------------------
+
+    @Test
+    void whenSnapshotDeclaresParameters_thenParametersTableIsRendered() {
+        String snapshot = """
+                {
+                  "parameters": [
+                    {"name": "userId", "in": "path", "required": true,
+                     "description": "User identifier",
+                     "schema": {"type": "string"}}
+                  ]
+                }
+                """;
+        ApiSummary a = apiWithSnapshot("GET", "/users/{userId}", "Fetch user", null,
+                "openapi", snapshot);
+        String rendered = renderer.render(ctx(a, "https://service-page", "https://spec"));
+
+        assertThat(rendered)
+                .contains("Parameters")
+                .contains("userId")
+                .contains("path")
+                .contains("string")
+                .contains("User identifier");
+    }
+
+    @Test
+    void whenSnapshotHasNoParameters_thenParametersSectionIsOmitted() {
+        ApiSummary a = apiWithSnapshot("GET", "/health", "Health", null, "openapi", "{}");
+        String rendered = renderer.render(ctx(a, "https://service-page", "https://spec"));
+
+        assertThat(rendered).doesNotContain("Parameters");
+    }
+
+    @Test
+    void whenSnapshotDeclaresRequestBodyWithObjectSchema_thenRequestBodyRendered() {
+        String snapshot = """
+                {
+                  "requestBody": {
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "type": "object",
+                          "required": ["name"],
+                          "properties": {
+                            "name": {"type": "string", "description": "Display name"},
+                            "age": {"type": "integer"}
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                """;
+        ApiSummary a = apiWithSnapshot("POST", "/users", "Create user", null,
+                "openapi", snapshot);
+        String rendered = renderer.render(ctx(a, "https://service-page", "https://spec"));
+
+        assertThat(rendered)
+                .contains("Request Body")
+                .contains("application/json")
+                .contains("name")
+                .contains("string")
+                .contains("age")
+                .contains("integer");
+    }
+
+    @Test
+    void whenSnapshotDeclaresMultipleResponses_thenResponsesGroupedByStatusCode() {
+        String snapshot = """
+                {
+                  "responses": {
+                    "200": {"description": "OK",
+                            "content": {"application/json": {"schema": {"type": "object",
+                                "properties": {"id": {"type": "string"}}}}}},
+                    "404": {"description": "Not found"}
+                  }
+                }
+                """;
+        ApiSummary a = apiWithSnapshot("GET", "/users/{id}", "Get user", null,
+                "openapi", snapshot);
+        String rendered = renderer.render(ctx(a, "https://service-page", "https://spec"));
+
+        assertThat(rendered)
+                .contains("Responses")
+                .contains("200")
+                .contains("OK")
+                .contains("404")
+                .contains("Not found");
+    }
+
+    @Test
+    void whenSnapshotHasInlineExample_thenExampleRenderedAsCodeBlock() {
+        String snapshot = """
+                {
+                  "requestBody": {
+                    "content": {
+                      "application/json": {
+                        "schema": {"type": "object"},
+                        "example": {"name": "Alice", "age": 30}
+                      }
+                    }
+                  }
+                }
+                """;
+        ApiSummary a = apiWithSnapshot("POST", "/users", "Create user", null,
+                "openapi", snapshot);
+        String rendered = renderer.render(ctx(a, "https://service-page", "https://spec"));
+
+        assertThat(rendered)
+                .contains("Example")
+                .contains("Alice")
+                .contains("30");
+    }
+
+    @Test
+    void whenSnapshotIsNull_thenNoSchemaSectionsRendered() {
+        ApiSummary a = apiWithSnapshot("GET", "/health", "Health", null, "openapi", null);
+        String rendered = renderer.render(ctx(a, "https://service-page", "https://spec"));
+
+        assertThat(rendered)
+                .doesNotContain("Parameters")
+                .doesNotContain("Request Body")
+                .doesNotContain("Responses");
+    }
+
+    @Test
+    void whenSchemaIsDeeplyNested_thenInnerLevelCollapsesToTypeName() {
+        String snapshot = """
+                {
+                  "requestBody": {
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "type": "object",
+                          "properties": {
+                            "address": {
+                              "type": "object",
+                              "properties": {
+                                "street": {"type": "string"},
+                                "city": {"type": "string"}
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                """;
+        ApiSummary a = apiWithSnapshot("POST", "/users", "Create", null, "openapi", snapshot);
+        String rendered = renderer.render(ctx(a, "https://service-page", "https://spec"));
+
+        // Outer "address" is rendered with its declared type. The inner
+        // street/city fields are collapsed — the renderer is one level deep
+        // by design; the spec link is the canonical place for full detail.
+        assertThat(rendered)
+                .contains("address")
+                .doesNotContain("street")
+                .doesNotContain("city");
+    }
+
     // ---- helpers --------------------------------------------------------
 
     private ApiEndpointPageContext ctx(ApiSummary api, String serviceUrl, String specUrl) {
@@ -134,5 +295,11 @@ class ApiEndpointPageRendererTest {
     private ApiSummary api(String method, String path, String description,
                            String auth, String source) {
         return new ApiSummary(UUID.randomUUID(), path, method, auth, description, source, null);
+    }
+
+    private ApiSummary apiWithSnapshot(String method, String path, String description,
+                                       String auth, String source, String snapshot) {
+        return new ApiSummary(UUID.randomUUID(), path, method, auth, description, source,
+                null, snapshot);
     }
 }

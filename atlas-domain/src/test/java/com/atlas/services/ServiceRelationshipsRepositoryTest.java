@@ -184,6 +184,32 @@ class ServiceRelationshipsRepositoryTest {
         assertThat(relationships.findStaleIntakeApis(svc.getId())).isEmpty();
     }
 
+    @Test
+    void whenApiIsInsertedWithSnapshot_thenLiveViewReturnsIt() {
+        Service svc = save("snap-svc", "team");
+        String snapshot = "{\"requestBody\":{\"content\":{\"application/json\":{\"schema\":{\"type\":\"object\"}}}}}";
+
+        relationships.insertApi(svc.getId(), "/v1/orders", "POST", null,
+                "Create order", "openapi", "present", null, snapshot);
+
+        List<ApiSummary> rows = relationships.findApisFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).openapiSnapshot()).isEqualTo(snapshot);
+    }
+
+    @Test
+    void whenLatestObservationCarriesSnapshot_thenLiveViewSurfacesIt_andEarlierIsHidden() {
+        Service svc = save("snap-evolve", "team");
+        relationships.insertApi(svc.getId(), "/v1/orders", "POST", null,
+                "Create order", "openapi", "present", null, "{\"v\":1}");
+        relationships.insertApi(svc.getId(), "/v1/orders", "POST", null,
+                "Create order", "openapi", "present", null, "{\"v\":2}");
+
+        List<ApiSummary> rows = relationships.findApisFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).openapiSnapshot()).isEqualTo("{\"v\":2}");
+    }
+
     private Service save(String name, String ownerTeam) {
         Service s = new Service();
         s.setName(name);

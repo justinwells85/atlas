@@ -1,0 +1,24 @@
+-- V21: per-endpoint OpenAPI schema snapshot for L3 drill-down (Phase 5.6 M1).
+--
+-- Adds a TEXT column on apis carrying the per-operation OpenAPI document
+-- (parameters, requestBody, responses, examples) as a JSON string. Stored
+-- as TEXT (not the JSON column type) because:
+--
+--   1. Atlas never queries inside the snapshot — it's read whole, parsed
+--      at render time, and rendered to Confluence storage format. JSON
+--      column validation buys us nothing for this access pattern.
+--   2. Portable across Postgres and MariaDB without per-vendor JSON-type
+--      handling and without JdbcTemplate JSON-binding ceremony. The other
+--      JSON column in this schema (services.metadata) is read via
+--      Hibernate @JdbcTypeCode(SqlTypes.JSON); apis is JdbcTemplate, so
+--      the simplest path is "TEXT carrying JSON".
+--
+-- Append-only: each apis observation carries its own snapshot. A schema
+-- change between runs writes a new presence='present' observation; the
+-- previous snapshot is retained on the prior observation row.
+--
+-- NULLable: intake-source rows have no spec to derive a snapshot from
+-- and stay NULL; openapi-source rows pre-V21 also stay NULL until the
+-- next refresh repopulates them.
+
+ALTER TABLE apis ADD COLUMN openapi_snapshot TEXT NULL;

@@ -351,14 +351,15 @@ public class CodeSyncCoordinator {
             ApiSummary current = live.remove(k);
             if (current == null) {
                 relationships.insertApi(serviceId, ep.path(), ep.method(),
-                        ep.authMethod(), ep.description(), SOURCE);
+                        ep.authMethod(), ep.description(), SOURCE,
+                        "present", null, ep.openapiSnapshot());
                 created++;
             } else if (changed(current, ep)) {
                 // Append a new observation; carry forward the page_id so the
                 // existing per-endpoint Confluence page keeps being tracked.
                 relationships.insertApi(serviceId, ep.path(), ep.method(),
                         ep.authMethod(), ep.description(), SOURCE,
-                        "present", current.confluencePageId());
+                        "present", current.confluencePageId(), ep.openapiSnapshot());
                 updated++;
             }
             // No-op: live observation matches fresh — append-only avoids
@@ -426,7 +427,8 @@ public class CodeSyncCoordinator {
 
     private static boolean changed(ApiSummary current, EndpointRecord fresh) {
         return !equalsNullable(current.authMethod(), fresh.authMethod())
-                || !equalsNullable(current.description(), fresh.description());
+                || !equalsNullable(current.description(), fresh.description())
+                || !equalsNullable(current.openapiSnapshot(), fresh.openapiSnapshot());
     }
 
     private static boolean equalsNullable(String a, String b) {

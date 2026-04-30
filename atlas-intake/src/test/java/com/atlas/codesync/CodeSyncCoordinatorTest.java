@@ -290,6 +290,88 @@ class CodeSyncCoordinatorTest {
     }
 
     @Test
+    void whenSpecHasSchemaDetail_thenSnapshotIsPersistedOnEachApiRow() {
+        Service s = saveService("snap-svc", specUrl());
+        stubSpec("""
+                {
+                  "openapi": "3.0.1",
+                  "info": {"title": "snap-svc", "version": "1.0"},
+                  "paths": {
+                    "/v1/orders": {
+                      "post": {
+                        "summary": "Create order",
+                        "requestBody": {
+                          "content": {
+                            "application/json": {
+                              "schema": {"type": "object",
+                                "properties": {"sku": {"type": "string"}}}
+                            }
+                          }
+                        },
+                        "responses": {"201": {"description": "Created"}}
+                      }
+                    }
+                  }
+                }
+                """);
+
+        coordinator.refreshOpenApi(s.getId());
+
+        List<ApiSummary> rows = relationships.findApisFor(s.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).openapiSnapshot())
+                .isNotNull()
+                .contains("requestBody")
+                .contains("\"sku\"")
+                .contains("\"201\"");
+    }
+
+    @Test
+    void whenSnapshotChangesBetweenRuns_thenNewObservationCarriesNewSnapshot() {
+        Service s = saveService("snap-evolve", specUrl());
+        stubSpec("""
+                {
+                  "openapi": "3.0.1",
+                  "info": {"title": "snap-evolve", "version": "1.0"},
+                  "paths": {
+                    "/v1/orders": {
+                      "post": {"summary": "Create",
+                        "requestBody": {"content": {"application/json": {
+                          "schema": {"type": "object",
+                            "properties": {"sku": {"type": "string"}}}}}}}
+                    }
+                  }
+                }
+                """);
+        coordinator.refreshOpenApi(s.getId());
+
+        // Same description + auth, but the schema gained a field. Code-sync
+        // should treat this as a content change and append a new observation.
+        wireMock.resetAll();
+        stubSpec("""
+                {
+                  "openapi": "3.0.1",
+                  "info": {"title": "snap-evolve", "version": "1.0"},
+                  "paths": {
+                    "/v1/orders": {
+                      "post": {"summary": "Create",
+                        "requestBody": {"content": {"application/json": {
+                          "schema": {"type": "object",
+                            "properties": {"sku": {"type": "string"},
+                                           "quantity": {"type": "integer"}}}}}}}
+                    }
+                  }
+                }
+                """);
+        CodeSyncResult result = coordinator.refreshOpenApi(s.getId());
+
+        assertThat(result.updated()).isEqualTo(1);
+        List<ApiSummary> rows = relationships.findApisFor(s.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).openapiSnapshot()).contains("\"quantity\"");
+    }
+
+    @Test
     void whenOpenApiSpecIsRefreshedTwice_thenSecondRunIsIdempotent() {
         Service s = saveService("idem-svc", specUrl());
         String spec = """
