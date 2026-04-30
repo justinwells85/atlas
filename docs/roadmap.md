@@ -96,7 +96,7 @@ Goal: extend the Confluence space so a newcomer can drill from the landing page 
 
 Goal: extend Atlas so it can describe a Spring Integration service at the same granularity Phase 5.6 achieved for vanilla Spring services. The user's organization runs ~12 services on Spring Integration; Phase 5.6's L5 Beans extractor misses the framework's most interesting structure (`IntegrationFlow` DSL chains, `MessageChannel` beans, `@MessagingGateway` interfaces). Without this phase, a stakeholder demo against one of those services renders thin pages. Plan: `docs/plans/2026-04-30-spring-integration-drill-down.md`.
 
-- [ ] M0 — Discovery: identify target work-org SI service, scope annotation/DSL mix, resolve private-repo auth (DD-014)
+- [ ] M0 — Discovery + `RepoSourceFetcher` abstraction (local-filesystem + GitHub-Contents implementations); register target SI service via `file://` URL; scope annotation/DSL mix
 - [ ] M1 — Annotation endpoints + `@MessagingGateway` interfaces (V25 + V26 + extractors + coordinator + REST endpoint)
 - [ ] M2 — `@Bean MessageChannel` definitions + `IntegrationFlow` DSL parser with project-level cross-file channel resolution (V27 + V28)
 - [ ] M3 — Per-service Flows page (mermaid graph per flow) + L2 Section 8 "Internals" Flows sub-bullet

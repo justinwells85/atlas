@@ -31,7 +31,8 @@ Extend Atlas so it can describe a Spring Integration service at granular detail:
 - **IntegrationFlow chains are mostly linear.** Routers and splitters introduce branches; the renderer needs to handle them in mermaid. Branches that go through lambda-typed routing functions (`.route(payload -> ...)`) are recorded as "lambda routing" with the lambda body opaque — extracting routing semantics from arbitrary lambda bodies is out of scope.
 - **`@Bean MessageChannel` definitions are static.** Channels created at runtime via factories or reflection are not captured.
 - **Per-source provenance + append-only is the design rule.** Same vocabulary as Phase 5.6: `source='source-tree'` for AST-extracted rows, `observed_at`/`presence` columns universal.
-- **Private-repo auth (DD-014) may surface as an M0 blocker.** If the demo target is in a private repo, M0's first deliverable is auth strategy + working `RepoFileFetcher`. Public-repo fallback: the user can copy a representative SI service to a sandbox public repo for the duration of the phase.
+- **Source ingestion routes via a fetcher abstraction.** The user is starting with a *local copy* of the target service's source (canonical home is enterprise GitHub). M0 introduces a `RepoSourceFetcher` interface with two implementations: `LocalFilesystemRepoFetcher` (new, walks a local directory tree — drives M1–M4 dev) and `GitHubContentsRepoFetcher` (existing class, lightly refactored to fit the interface; configurable `api-base` + optional Bearer token already enables GitHub Enterprise without further code work). Routing decision: `repo_url` starting with `file://` → local fetcher; anything else → GitHub Contents fetcher.
+- **DD-014 narrows.** Originally framed as broad private-repo auth, the work surface for this phase is now: (a) local filesystem path support — this phase, M0; (b) GitHub Enterprise via PAT in env var — deferred until the demo demand actually requires it. Demo recording can run against the local copy; Enterprise integration is a Phase 6 / post-demo unlock.
 - **Demo Confluence space.** Phase 5.6 used the ATLAS sandbox space; this phase defaults to the same space until rendering granularity is validated, then optionally re-targets to a work-org space.
 - **The four-module architecture stays.** No new module, no new app. The new extractors + table + renderer slot into the existing modules per Phase 5.6 conventions.
 
@@ -49,25 +50,55 @@ Order is smallest-cost to largest, closing with demo prep:
 
 ## Milestones
 
-### M0 — Discovery + scope resolution
+### M0 — Discovery + local-filesystem fetcher
 
-**Goal**: enough context on the target service to start M1's red phase with confidence. No code, no tests. Deliverable is a written note.
+**Goal**: target-service source readable by Atlas via a local-filesystem path; written discovery note for M1's red phase. **Resolved 2026-04-30: target source will live as a local copy on the user's filesystem; canonical home is enterprise GitHub (deferred — M4 / Phase 6).**
 
-1. Resolve **Open question 1** (below): which work-org service, what repo access. This unblocks everything else.
-2. Inspect the target service's source. Inventory:
+**Scope**:
+
+1. Inspect the target service's source (once the local copy is in place). Inventory:
    - Annotation-driven vs DSL-driven mix (60/40? 90/10?)
    - Channel naming convention (camelCase bean names, hyphenated string names, both)
    - Custom DSL extensions (homegrown `OrgFlowBuilder.from(...)` style — if extensive, scope expands)
    - Java language level (21? 17? 11?)
    - Use of `@MessagingGateway` interfaces — how many, how complex
-3. Scope DD-014 if target is private:
-   - Personal Access Token via env var — simplest, what to do first
-   - GitHub App installation token — reusable, more setup
-   - Pre-fetch source to a sandbox public repo as a workaround
-4. Pick demo Confluence space: ATLAS sandbox vs work-org. Likely sandbox for M1–M3, optional re-target at M4.
-5. Capture findings in `docs/notes/2026-XX-XX-si-discovery.md` — short note (≤2 pages).
+2. **Introduce the `RepoSourceFetcher` abstraction**:
+   - Extract a small interface from the existing `RepoFileFetcher`:
+     ```java
+     interface RepoSourceFetcher {
+         List<RepoFile> listJavaSourcesUnder(String repoUrl, String relativePath);
+         Optional<RepoFile> fetchFile(String repoUrl, String path);
+     }
+     ```
+     The signature drops the `(owner, repo)` pair — `repoUrl` is the single addressing primitive going forward, with each implementation parsing it as needed.
+   - Rename the existing class to `GitHubContentsRepoFetcher`; keep its existing `parseGitHubUrl` + Contents API behaviour. (No behaviour change — refactor only.)
+   - Add `LocalFilesystemRepoFetcher`: walks a local directory tree using `java.nio.file.Files.walk`. Reads `.java` files into `RepoFile(path, content)`. Strips the base directory prefix from paths so downstream extractors see relative paths consistent with the GitHub fetcher.
+   - Add a `RepoSourceFetcherRouter` (or similar — Spring `@Primary` + the two beans) that picks an implementation based on the `repoUrl`'s scheme: `file://` → `LocalFilesystemRepoFetcher`; anything else → `GitHubContentsRepoFetcher`.
+3. **Tests for the new fetcher** (red-first):
+   - `whenLocalFilesystemRepoUrl_thenLocalFetcherIsUsed`
+   - `whenGithubRepoUrl_thenGithubFetcherIsUsed`
+   - `LocalFilesystemRepoFetcher`:
+     - `whenDirectoryTreeHasJavaSources_thenAllAreReturnedWithRelativePaths`
+     - `whenSubdirectoryContainsNonJavaFiles_thenTheyAreFiltered`
+     - `whenPathDoesNotExist_thenEmptyListReturned`
+4. Register the target service in Atlas: `repo_url=file:///path/to/local/copy`, `module_path=` (empty if leaf, or sub-module name if multi-module), via intake or a direct DB insert. M0 deliverable proves: `POST /api/code-sync/refresh-pom/{id}` against the registered local-source service returns the right module/dependency observations. (Pom + tests + beans-as-of-Phase-5.6 should all work end-to-end against the local copy without any Phase 5.7 code.)
+5. Pick demo Confluence space: ATLAS sandbox for M1–M4; re-target only if the user wants to demo from a work-org space.
+6. Capture discovery findings in `docs/notes/2026-XX-XX-si-discovery.md` (short — ≤2 pages).
 
-**Reflection at M0 boundary**: scope confirmed/refined; M1's open questions stable.
+**Steps**:
+
+1. (Red) interface + router tests + LocalFilesystemRepoFetcher tests.
+2. Refactor `RepoFileFetcher` → `GitHubContentsRepoFetcher` implementing the new interface.
+3. Implement `LocalFilesystemRepoFetcher`.
+4. Wire the router (Spring `@Primary` on the router, both fetchers as beans behind it).
+5. Update `CodeSyncCoordinator` injection points to take the `RepoSourceFetcher` interface rather than the concrete class.
+6. (Green) tests pass; existing GitHub-driven tests still pass unchanged.
+7. Register the local-copy target service; run `refresh-pom` / `refresh-tests` / `refresh-beans` against it; visually confirm the L1→L5 pages render with the post-Phase-5.6 surface.
+8. Write the discovery note covering scope inventory.
+
+**Test count**: ~6 new (3 router + 3 local fetcher) + zero behaviour change for the GitHub path.
+
+**Reflection at M0 boundary**: scope confirmed/refined; M1's open questions stable; local-source path validated end-to-end against the existing Phase 5.6 surface.
 
 ---
 
@@ -254,45 +285,41 @@ When a service has none of the above (i.e. not a Spring Integration service), th
 
 ### M4 — Demo prep + close
 
-**Goal**: target work SI service rendered end-to-end in Confluence; demo script updated; phase reflection.
+**Goal**: target work SI service rendered end-to-end in Confluence (against the local copy registered at M0); demo script updated; phase reflection.
 
-1. (If DD-014 work was deferred at M0) finalize private-repo auth strategy and ship.
-2. Re-point Atlas at the target service: register it via intake, set `module_path` correctly, set `repo_url`.
-3. Run the full code-sync sequence:
+1. Re-run the full code-sync sequence against the registered local-source target service:
    - `POST /api/code-sync/refresh-pom/{id}`
    - `POST /api/code-sync/refresh/{id}` (OpenAPI — likely empty for SI services without REST surface)
    - `POST /api/code-sync/refresh-tests/{id}`
    - `POST /api/code-sync/refresh-beans/{id}`
    - **`POST /api/code-sync/refresh-messaging/{id}`** (new in Phase 5.7)
    - `POST /api/sync/run`
-4. **Granularity check**: walk through the rendered Confluence pages manually. Does the L2 → Flows page → integration-flow block tell the audience what the service does? Are channels and handlers identifiable? Is the mermaid graph readable?
-5. Iterate on rendering polish (~1 day reserve). Likely candidates: mermaid layout direction, node labels, handler-class link-out, channel name truncation.
-6. Update `docs/demo-script.md` with the new SI walkthrough section.
-7. Optional: re-target to a work-org Confluence space if granularity holds.
-8. End-of-phase reflection: trajectory vs roadmap, surprises, demo-fitness assessment, recommendation for Phase 6 (the actual stakeholder demo) and post-demo direction.
-9. Commit + push + Phase 5.7 closed in roadmap.
+2. **Granularity check**: walk through the rendered Confluence pages manually. Does the L2 → Flows page → integration-flow block tell the audience what the service does? Are channels and handlers identifiable? Is the mermaid graph readable? Does the Internals section's drill-down feel coherent for a non-author reader?
+3. Iterate on rendering polish (~1 day reserve). Likely candidates: mermaid layout direction, node labels, handler-class link-out, channel name truncation, mermaid graph splitting if a single flow has too many nodes.
+4. Update `docs/demo-script.md` with the new SI walkthrough section.
+5. Optional: re-target to a work-org Confluence space if granularity holds.
+6. **Enterprise GitHub readiness (deferred to demo prep, not in scope today)**: if the demo audience asks "can this run against our live Enterprise repo?", the wiring is small — set `atlas.code-sync.github-api-base=https://github.<company>.com/api/v3` and add an `Authorization: Bearer ${GITHUB_PAT}` header to `GitHubContentsRepoFetcher`. Capture as a Phase 6 prep task; not done in M4 unless demand surfaces during M2/M3.
+7. End-of-phase reflection: trajectory vs roadmap, surprises, demo-fitness assessment, recommendation for Phase 6 (the stakeholder demo) and post-demo direction.
+8. Commit + push + Phase 5.7 closed in roadmap.
 
 ## Tests
 
 Behavior-focused, red-first, mocks only at architectural seams (Anthropic, Confluence, GitHub Contents API). Testcontainers Postgres + MariaDB for repository tests. Project rule from CLAUDE.md §4: test names read as specifications.
 
 Estimated test counts:
-- M0: 0 (no code)
+- M0: ~6 new (3 router + 3 LocalFilesystemRepoFetcher; refactor of existing GitHub fetcher tests stays count-neutral)
 - M1: ~15 new (5 annotation extractor + 4 gateway extractor + 3 repository + 3 coordinator)
 - M2: ~25 new (the DSL parser carries the most: 11 chain-walker + 6 channel extractor + 4 coordinator project-pass + 4 repository)
 - M3: ~12 new (6 renderer + 2 service-page + 4 SyncCoordinator + adjacent)
 - M4: 0 (manual walkthrough)
 
-End-of-phase target: ~371 active tests (current 319 + ~52). Net counts honest at milestone close.
+End-of-phase target: ~377 active tests (current 319 + ~58). Net counts honest at milestone close.
 
 ## Open questions
 
 Per memory: serial, not batched. Answer the first to unblock M0; subsequent surface at their milestone's red-test phase.
 
-1. **Which work-org service is the demo target, and how is its repo accessed?**
-   - Options: GitHub.com public, GitHub.com private, GitHub Enterprise, GitLab, Azure DevOps, Bitbucket Cloud, Bitbucket Server.
-   - Auth implications: Personal Access Token via env var (simplest), GitHub App installation (reusable across services), pre-fetch source to a public sandbox repo (workaround if auth is blocked).
-   - This unblocks every later step. **Pause for answer before starting M0.**
+1. ~~**Which work-org service is the demo target, and how is its repo accessed?**~~ *Resolved 2026-04-30: target source will live as a local filesystem copy on the user's machine; canonical home is enterprise GitHub. M0 introduces a `RepoSourceFetcher` abstraction with local-filesystem + GitHub-Contents implementations; Enterprise auth is deferred to demo demand.*
 
 2. *(Surfaces at M0.)* Annotation-style vs DSL-style mix in the target service? Custom DSL extensions wrapping Spring Integration? Both inform M1 vs M2 emphasis.
 
