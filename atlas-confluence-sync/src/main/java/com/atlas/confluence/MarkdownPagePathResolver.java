@@ -16,6 +16,7 @@ import java.util.Locale;
  *   <li>{@code "Service: <name>"} → {@code services/<name>/<name>.md}</li>
  *   <li>{@code "<name> — Beans"} → {@code services/<name>/beans.md}</li>
  *   <li>{@code "<name> — Tests"} → {@code services/<name>/tests.md}</li>
+ *   <li>{@code "<name> — Configuration"} → {@code services/<name>/configuration.md}</li>
  *   <li>{@code "<name> — Module: <path>"} → {@code services/<name>/modules/<path>.md}</li>
  *   <li>{@code "<name> — METHOD path"} → {@code services/<name>/endpoints/<method>-<slugified-path>.md}</li>
  * </ul>
@@ -37,6 +38,7 @@ final class MarkdownPagePathResolver {
     private static final String MODULE_INFIX = " — Module: ";
     private static final String BEANS_SUFFIX = " — Beans";
     private static final String TESTS_SUFFIX = " — Tests";
+    private static final String CONFIGURATION_SUFFIX = " — Configuration";
 
     private MarkdownPagePathResolver() {}
 
@@ -105,6 +107,9 @@ final class MarkdownPagePathResolver {
             }
             if (title.endsWith(TESTS_SUFFIX)) {
                 return "services/" + serviceSlug + "/tests.md";
+            }
+            if (title.endsWith(CONFIGURATION_SUFFIX)) {
+                return "services/" + serviceSlug + "/configuration.md";
             }
             if (rest.startsWith("Module: ")) {
                 String modulePath = rest.substring("Module: ".length());

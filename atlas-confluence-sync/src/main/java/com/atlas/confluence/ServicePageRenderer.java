@@ -469,6 +469,16 @@ public class ServicePageRenderer {
             appendThinNote(sb, "No tests documented yet.");
         }
 
+        sb.append("<h3>Configuration</h3>\n");
+        if (hasText(ctx.configurationPageUrl())) {
+            sb.append("<p>")
+                    .append(renderLink(ctx.configurationPageUrl(),
+                            "Configuration (properties, @Value, @ConfigurationProperties, @Enable*)"))
+                    .append("</p>\n");
+        } else {
+            appendThinNote(sb, "No configuration documented yet.");
+        }
+
         sb.append("<h3>Endpoints</h3>\n");
         List<ApiPresentation> endpointsWithUrls = ctx.apis().stream()
                 .filter(p -> hasText(p.endpointPageUrl()))

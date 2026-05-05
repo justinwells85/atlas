@@ -477,6 +477,43 @@ class ServicePageRendererTest {
     }
 
     @Test
+    void whenServiceHasConfigurationPage_thenConfigurationSubBulletLinksIt() {
+        // Phase 5.9 M4 — Section 8 gains a Configuration sub-bullet below Tests.
+        Service s = baseService();
+        String configUrl = "https://example.atlassian.net/wiki/spaces/ATLAS/pages/CONFIG";
+
+        ServicePageContext ctx = new ServicePageContext(
+                s, List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, configUrl);
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("<h3>Configuration</h3>")
+                .contains("href=\"https://example.atlassian.net/wiki/spaces/ATLAS/pages/CONFIG\"");
+        // Configuration appears below Tests per the resolved plan question.
+        assertThat(rendered.indexOf("<h3>Tests</h3>"))
+                .isLessThan(rendered.indexOf("<h3>Configuration</h3>"));
+    }
+
+    @Test
+    void whenServiceHasNoConfigurationPage_thenConfigurationSubBulletShowsThinNote() {
+        Service s = baseService();
+
+        ServicePageContext ctx = new ServicePageContext(
+                s, List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("<h3>Configuration</h3>")
+                .contains("No configuration documented yet.");
+    }
+
+    @Test
     void whenInternalsSectionRenders_thenLinksUseConfluencePageUrls_notSpecLinks() {
         Service s = baseService();
         ApiSummary endpoint = new ApiSummary(UUID.randomUUID(), "/v1/orders", "GET",

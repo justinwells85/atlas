@@ -9,11 +9,15 @@ import com.atlas.services.ExternalDependencyInventoryRow;
 import com.atlas.services.ExternalDependencyUsage;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceBean;
+import com.atlas.services.ServiceConfigProperty;
+import com.atlas.services.ServiceConfigurationPropertiesType;
 import com.atlas.services.ServiceDependencyEdge;
+import com.atlas.services.ServiceEnableAnnotation;
 import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceModule;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
+import com.atlas.services.ServiceValueInjection;
 import com.atlas.services.SoftDeletedApiPage;
 import com.atlas.services.SoftDeletedModulePage;
 import com.atlas.services.TestScenario;
@@ -97,6 +101,7 @@ public class SyncCoordinator {
     private final ApiEndpointPageRenderer endpointRenderer;
     private final ModulePageRenderer modulePageRenderer;
     private final BeansPageRenderer beansPageRenderer;
+    private final ConfigurationPageRenderer configurationPageRenderer;
     private final TestScenariosPageRenderer testScenariosRenderer;
     private final LandingPageRenderer landingRenderer;
     private final DataStoreInventoryRenderer dataStoreInventoryRenderer;
@@ -108,6 +113,7 @@ public class SyncCoordinator {
     private final ApiEndpointMarkdownRenderer endpointMarkdownRenderer;
     private final ModuleMarkdownRenderer moduleMarkdownRenderer;
     private final BeansMarkdownRenderer beansMarkdownRenderer;
+    private final ConfigurationMarkdownRenderer configurationMarkdownRenderer;
     private final TestScenariosMarkdownRenderer testScenariosMarkdownRenderer;
     private final LandingMarkdownRenderer landingMarkdownRenderer;
     private final DataStoreInventoryMarkdownRenderer dataStoreInventoryMarkdownRenderer;
@@ -127,6 +133,7 @@ public class SyncCoordinator {
             ApiEndpointPageRenderer endpointRenderer,
             ModulePageRenderer modulePageRenderer,
             BeansPageRenderer beansPageRenderer,
+            ConfigurationPageRenderer configurationPageRenderer,
             TestScenariosPageRenderer testScenariosRenderer,
             LandingPageRenderer landingRenderer,
             DataStoreInventoryRenderer dataStoreInventoryRenderer,
@@ -137,6 +144,7 @@ public class SyncCoordinator {
             ApiEndpointMarkdownRenderer endpointMarkdownRenderer,
             ModuleMarkdownRenderer moduleMarkdownRenderer,
             BeansMarkdownRenderer beansMarkdownRenderer,
+            ConfigurationMarkdownRenderer configurationMarkdownRenderer,
             TestScenariosMarkdownRenderer testScenariosMarkdownRenderer,
             LandingMarkdownRenderer landingMarkdownRenderer,
             DataStoreInventoryMarkdownRenderer dataStoreInventoryMarkdownRenderer,
@@ -153,6 +161,7 @@ public class SyncCoordinator {
         this.endpointRenderer = endpointRenderer;
         this.modulePageRenderer = modulePageRenderer;
         this.beansPageRenderer = beansPageRenderer;
+        this.configurationPageRenderer = configurationPageRenderer;
         this.testScenariosRenderer = testScenariosRenderer;
         this.landingRenderer = landingRenderer;
         this.dataStoreInventoryRenderer = dataStoreInventoryRenderer;
@@ -163,6 +172,7 @@ public class SyncCoordinator {
         this.endpointMarkdownRenderer = endpointMarkdownRenderer;
         this.moduleMarkdownRenderer = moduleMarkdownRenderer;
         this.beansMarkdownRenderer = beansMarkdownRenderer;
+        this.configurationMarkdownRenderer = configurationMarkdownRenderer;
         this.testScenariosMarkdownRenderer = testScenariosMarkdownRenderer;
         this.landingMarkdownRenderer = landingMarkdownRenderer;
         this.dataStoreInventoryMarkdownRenderer = dataStoreInventoryMarkdownRenderer;
@@ -355,6 +365,7 @@ public class SyncCoordinator {
         syncModulePages(service);
         syncTestsPage(service);
         syncBeansPage(service);
+        syncConfigurationPage(service);
 
         // Pass 2: re-render the L2 service page so Section 8 "Internals"
         // picks up the refs assigned by the child syncs above.
@@ -494,6 +505,57 @@ public class SyncCoordinator {
             applyUpserts(plans, title);
         } catch (Exception e) {
             log.warn("Beans-page sync failed for service {}: {}", service.getName(), e.getMessage());
+        }
+    }
+
+    private void syncConfigurationPage(Service service) {
+        try {
+            List<ServiceConfigProperty> properties = relationships.findConfigPropertiesFor(service.getId());
+            List<ServiceValueInjection> injections = relationships.findValueInjectionsFor(service.getId());
+            List<ServiceConfigurationPropertiesType> configTypes =
+                    relationships.findConfigurationPropertiesTypesFor(service.getId());
+            List<ServiceEnableAnnotation> enables = relationships.findEnableAnnotationsFor(service.getId());
+            String title = ConfigurationPageRenderer.pageTitle(service);
+            List<SinkPlan> plans = new ArrayList<>(sinks.size());
+            for (WikiSink sink : sinks) {
+                ConfigurationPageContext ctx = new ConfigurationPageContext(
+                        service, properties, injections, configTypes, enables,
+                        serviceCrossLinkTargetFor(sink, service));
+                String body;
+                String existingRef;
+                Consumer<String> persist;
+                switch (routeOf(sink)) {
+                    case MARKDOWN -> {
+                        body = configurationMarkdownRenderer.render(ctx);
+                        existingRef = service.getConfigurationMarkdownPath();
+                        persist = freshRef -> {
+                            if (!Objects.equals(freshRef, service.getConfigurationMarkdownPath())) {
+                                relationships.setServiceConfigurationMarkdownPath(service.getId(), freshRef);
+                                service.setConfigurationMarkdownPath(freshRef);
+                            }
+                        };
+                    }
+                    case CONFLUENCE -> {
+                        body = configurationPageRenderer.render(ctx);
+                        existingRef = service.getConfigurationPageId();
+                        persist = freshRef -> {
+                            if (!Objects.equals(freshRef, service.getConfigurationPageId())) {
+                                relationships.setServiceConfigurationPageId(service.getId(), freshRef);
+                                service.setConfigurationPageId(freshRef);
+                            }
+                        };
+                    }
+                    default -> {
+                        body = configurationPageRenderer.render(ctx);
+                        existingRef = null;
+                        persist = NO_OP_PERSIST;
+                    }
+                }
+                plans.add(new SinkPlan(sink, existingRef, body, serviceParentRefFor(sink, service), persist));
+            }
+            applyUpserts(plans, title);
+        } catch (Exception e) {
+            log.warn("Configuration-page sync failed for service {}: {}", service.getName(), e.getMessage());
         }
     }
 
@@ -646,10 +708,11 @@ public class SyncCoordinator {
         }
         String beansRef = beansCrossLinkTargetFor(sink, service);
         String testsRef = testsCrossLinkTargetFor(sink, service);
+        String configurationRef = configurationCrossLinkTargetFor(sink, service);
 
         return new ServicePageContext(service, apiPresentations, upstream, downstream, dbs, exts, metadata, changes,
                 servicePageRefs, inventoryUrls,
-                modules, modulePageRefs, beansRef, testsRef);
+                modules, modulePageRefs, beansRef, testsRef, configurationRef);
     }
 
     private Map<UUID, String> buildServicePageRefsFor(WikiSink sink, List<Service> services) {
@@ -698,6 +761,13 @@ public class SyncCoordinator {
             return MarkdownPagePathResolver.wikiLinkTargetFor(s.getTestsMarkdownPath());
         }
         return pageUrlForOptional(s.getTestsPageId());
+    }
+
+    private String configurationCrossLinkTargetFor(WikiSink sink, Service s) {
+        if (LocalMarkdownWikiSink.NAME.equals(sink.name())) {
+            return MarkdownPagePathResolver.wikiLinkTargetFor(s.getConfigurationMarkdownPath());
+        }
+        return pageUrlForOptional(s.getConfigurationPageId());
     }
 
     private String moduleCrossLinkTargetFor(WikiSink sink, ServiceModule m) {

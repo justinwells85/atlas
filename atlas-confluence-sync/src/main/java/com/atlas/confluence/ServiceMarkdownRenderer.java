@@ -443,6 +443,17 @@ public class ServiceMarkdownRenderer {
         }
         sb.append('\n');
 
+        sb.append("### Configuration\n\n");
+        if (hasText(ctx.configurationPageUrl())) {
+            sb.append(MarkdownRenderingUtil.wikiLink(
+                            ctx.configurationPageUrl(),
+                            "Configuration (properties, @Value, @ConfigurationProperties, @Enable*)"))
+                    .append('\n');
+        } else {
+            appendThinNote(sb, "No configuration documented yet.");
+        }
+        sb.append('\n');
+
         sb.append("### Endpoints\n\n");
         List<ApiPresentation> endpointsWithRefs = ctx.apis().stream()
                 .filter(p -> hasText(p.endpointPageUrl()))

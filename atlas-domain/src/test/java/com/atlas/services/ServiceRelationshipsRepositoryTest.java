@@ -484,6 +484,44 @@ class ServiceRelationshipsRepositoryTest {
         assertThat(rows.get(0).prefix()).isEmpty();
     }
 
+    // ---- services.configuration_page_id + configuration_markdown_path (Phase 5.9 M4)
+
+    @Test
+    void whenServiceConfigurationPageIdIsSet_thenServiceEntityCarriesIt() {
+        Service svc = save("config-page-id", "team");
+
+        relationships.setServiceConfigurationPageId(svc.getId(), "CONFIG_PAGE_42");
+
+        Service reloaded = services.findById(svc.getId()).orElseThrow();
+        assertThat(reloaded.getConfigurationPageId()).isEqualTo("CONFIG_PAGE_42");
+    }
+
+    @Test
+    void whenServiceConfigurationMarkdownPathIsSet_thenServiceEntityCarriesIt() {
+        Service svc = save("config-markdown-path", "team");
+
+        relationships.setServiceConfigurationMarkdownPath(svc.getId(),
+                "services/config-markdown-path/configuration.md");
+
+        Service reloaded = services.findById(svc.getId()).orElseThrow();
+        assertThat(reloaded.getConfigurationMarkdownPath())
+                .isEqualTo("services/config-markdown-path/configuration.md");
+    }
+
+    @Test
+    void whenBothConfigurationRefsAreSet_thenBothPersistIndependently() {
+        Service svc = save("config-dual-refs", "team");
+
+        relationships.setServiceConfigurationPageId(svc.getId(), "CONF_PAGE");
+        relationships.setServiceConfigurationMarkdownPath(svc.getId(),
+                "services/config-dual-refs/configuration.md");
+
+        Service reloaded = services.findById(svc.getId()).orElseThrow();
+        assertThat(reloaded.getConfigurationPageId()).isEqualTo("CONF_PAGE");
+        assertThat(reloaded.getConfigurationMarkdownPath())
+                .isEqualTo("services/config-dual-refs/configuration.md");
+    }
+
     // ---- service_enable_annotations (Phase 5.9 M3) -----------------------
 
     @Test

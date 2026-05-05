@@ -397,6 +397,20 @@ public class ServiceRelationshipsRepository {
                 path, serviceId);
     }
 
+    /** Update services.configuration_page_id after the sync coordinator creates the per-service Configuration page (Phase 5.9 M4). */
+    public void setServiceConfigurationPageId(UUID serviceId, String pageId) {
+        jdbc.update(
+                "UPDATE services SET configuration_page_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                pageId, serviceId);
+    }
+
+    /** Update services.configuration_markdown_path after the Markdown sink writes the configuration page (Phase 5.9 M4). */
+    public void setServiceConfigurationMarkdownPath(UUID serviceId, String path) {
+        jdbc.update(
+                "UPDATE services SET configuration_markdown_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                path, serviceId);
+    }
+
     // --- service_beans (Phase 5.6 M3 — append-only from day one) -------
 
     /**

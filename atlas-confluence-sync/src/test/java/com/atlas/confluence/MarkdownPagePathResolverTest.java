@@ -61,6 +61,12 @@ class MarkdownPagePathResolverTest {
     }
 
     @Test
+    void whenConfigurationTitle_thenConfigurationMdUnderService() {
+        assertThat(MarkdownPagePathResolver.pathFor("atlas-intake — Configuration"))
+                .isEqualTo("services/atlas-intake/configuration.md");
+    }
+
+    @Test
     void whenModuleTitle_thenModulesPathUnderService() {
         assertThat(MarkdownPagePathResolver.pathFor("billing-service — Module: billing-api"))
                 .isEqualTo("services/billing-service/modules/billing-api.md");

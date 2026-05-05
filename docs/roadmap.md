@@ -119,14 +119,16 @@ Goal: introduce a `WikiSink` abstraction with a `LocalMarkdownWikiSink` implemen
 
 **Phase 5.8 is closed.** 477 active tests, 0 failures. Production defaults are now confidential-safe (local-markdown only); the public ATLAS Confluence dogfood continues to work via the `confluence-dogfood` Spring profile. Phase 5.9 (configuration extraction) is the next phase; Phase 5.7 (Spring Integration drill-down, paused) resumes after 5.9.
 
-## Phase 5.9 — Configuration extraction (ACTIVE — M1 closed)
+## Phase 5.9 — Configuration extraction (CLOSED 2026-05-05)
 
 Goal: surface application configuration deep enough to answer "what does this service actually run with?" Closes the largest remaining gap for the ownership-analysis mission — services that lean heavily on in-house `@Enable*` annotations or external config sources are otherwise opaque to today's Atlas.
 
 - [x] M1 — `application.properties` / `application.yml` parsing, including profile-specific overrides (V26 `service_config_properties` + `PropertiesFileParser` + `refreshConfiguration` coordinator + `POST /api/code-sync/refresh-configuration/{serviceId}`; DD-016 + DD-017 captured)
 - [x] M2 — `@Value` / `@ConfigurationProperties` extraction from source (V27 adds `service_value_injections` + `service_configuration_properties_types` with JSON-encoded components on parent row; `JavaConfigurationExtractor` AST visitor; `refreshConfiguration` extended with a second pass walking `{module_path}/src/main/java`)
 - [x] M3 — `@Enable*` annotation surface (V28 adds `service_enable_annotations`; `JavaEnableAnnotationExtractor` lexical filter on `@Configuration`/`@SpringBootApplication` classes with import-resolved FQN + same-package fallback; `JavaTypeJavadocIndexer` for same-module javadoc resolution; DD-018 captured for cross-module gap)
-- [ ] M4 — Per-service Configuration page; L2 Section 8 "Internals" gains a Configuration sub-bullet
+- [x] M4 — Per-service Configuration page (V29 adds dual-column persistence; `ConfigurationPageRenderer` Confluence + `ConfigurationMarkdownRenderer` Markdown; cross-link from `@Value` rows to property anchors via `id="key-X"` in Confluence and Obsidian heading anchors in Markdown; `SyncCoordinator.syncConfigurationPage`; L2 Section 8 "Internals" Configuration sub-bullet placed below Tests)
+
+**Phase 5.9 is closed.** 590 active tests across all four modules; net +113 vs end of Phase 5.8.
 
 Closes by phase boundary: opening a service's Markdown vault answers "what config knobs exist, what their defaults are, what overrides apply per profile, and which `@Enable*` annotations are turning on what subsystems."
 

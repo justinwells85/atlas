@@ -222,7 +222,27 @@ class ServiceMarkdownRendererTest {
                 .contains("*No modules documented yet.*")
                 .contains("*No code index documented yet.*")
                 .contains("*No tests documented yet.*")
+                .contains("*No configuration documented yet.*")
                 .contains("*No endpoints documented yet.*");
+    }
+
+    @Test
+    void whenServiceHasConfigurationPage_thenConfigurationSubBulletLinksItBelowTests() {
+        // Phase 5.9 M4 — Section 8 gains a Configuration sub-bullet below Tests.
+        Service s = baseService();
+
+        ServicePageContext ctx = new ServicePageContext(
+                s, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                Map.of(), InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, "base — Configuration");
+
+        String rendered = renderer.render(ctx);
+
+        assertThat(rendered)
+                .contains("### Configuration")
+                .contains("[[base — Configuration|Configuration (properties, @Value, @ConfigurationProperties, @Enable*)]]");
+        assertThat(rendered.indexOf("### Tests"))
+                .isLessThan(rendered.indexOf("### Configuration"));
     }
 
     @Test
