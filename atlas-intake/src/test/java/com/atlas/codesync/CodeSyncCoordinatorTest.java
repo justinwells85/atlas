@@ -3,10 +3,12 @@ package com.atlas.codesync;
 import com.atlas.services.ApiSummary;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceConfigProperty;
+import com.atlas.services.ServiceConfigurationPropertiesType;
 import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
 import com.atlas.services.ServiceStatus;
+import com.atlas.services.ServiceValueInjection;
 import com.atlas.services.TestScenario;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import org.junit.jupiter.api.BeforeEach;
@@ -82,6 +84,8 @@ class CodeSyncCoordinatorTest {
         jdbc.update("DELETE FROM service_metadata");
         jdbc.update("DELETE FROM service_external_deps");
         jdbc.update("DELETE FROM external_dependencies");
+        jdbc.update("DELETE FROM service_value_injections");
+        jdbc.update("DELETE FROM service_configuration_properties_types");
         jdbc.update("DELETE FROM service_config_properties");
         jdbc.update("DELETE FROM service_changes");
         jdbc.update("DELETE FROM services");
@@ -1129,6 +1133,230 @@ class CodeSyncCoordinatorTest {
 
         assertAuditCount(s.getId(), 1);
         assertLastAuditChangedBy(s.getId(), "code-sync-configuration");
+    }
+
+    // ---- refreshConfiguration source-tree extension (Phase 5.9 M2) ------
+
+    @Test
+    void whenRepoHasValueInjectionsInSource_thenInjectionsArePersistedWithSourceTree() {
+        Service s = saveServiceWithRepo("value-svc", "https://github.com/o/r", null);
+        // Resources path returns 404 (no properties files); only @Value matters here.
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        stubGithubListing("/repos/o/r/contents/src/main/java", """
+                [{"type":"file","name":"MyConfig.java","path":"src/main/java/MyConfig.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.beans.factory.annotation.Value;
+                public class MyConfig {
+                    @Value("${atlas.api.key:fallback}")
+                    private String apiKey;
+                }
+                """)));
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isEqualTo(1);
+        List<ServiceValueInjection> rows = relationships.findValueInjectionsFor(s.getId());
+        assertThat(rows).hasSize(1);
+        ServiceValueInjection v = rows.get(0);
+        assertThat(v.enclosingClass()).isEqualTo("com.example.MyConfig");
+        assertThat(v.memberName()).isEqualTo("apiKey");
+        assertThat(v.memberKind()).isEqualTo("field");
+        assertThat(v.keyPath()).isEqualTo("atlas.api.key");
+        assertThat(v.defaultValue()).isEqualTo("fallback");
+        assertThat(v.source()).isEqualTo("source-tree");
+    }
+
+    @Test
+    void whenRepoHasConfigurationPropertiesType_thenItIsPersistedWithSourceTree() {
+        Service s = saveServiceWithRepo("cfg-type-svc", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        stubGithubListing("/repos/o/r/contents/src/main/java", """
+                [{"type":"file","name":"AtlasProperties.java","path":"src/main/java/AtlasProperties.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.boot.context.properties.ConfigurationProperties;
+                @ConfigurationProperties("atlas")
+                public record AtlasProperties(String apiKey, int port) {}
+                """)));
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isEqualTo(1);
+        List<ServiceConfigurationPropertiesType> rows =
+                relationships.findConfigurationPropertiesTypesFor(s.getId());
+        assertThat(rows).hasSize(1);
+        ServiceConfigurationPropertiesType t = rows.get(0);
+        assertThat(t.enclosingClass()).isEqualTo("com.example.AtlasProperties");
+        assertThat(t.prefix()).isEqualTo("atlas");
+        assertThat(t.typeKind()).isEqualTo("record");
+        assertThat(t.components()).contains("\"apiKey\"").contains("\"port\"");
+    }
+
+    @Test
+    void whenValueInjectionDisappearsFromSource_thenItIsTombstoned() {
+        Service s = saveServiceWithRepo("value-trim-svc", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        String firstBody = """
+                [{"type":"file","name":"C.java","path":"src/main/java/C.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.beans.factory.annotation.Value;
+                public class C {
+                    @Value("${a.kept}") private String kept;
+                    @Value("${a.removed}") private String removed;
+                }
+                """));
+        stubGithubListing("/repos/o/r/contents/src/main/java", firstBody);
+        coordinator.refreshConfiguration(s.getId());
+
+        wireMock.resetAll();
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        String secondBody = """
+                [{"type":"file","name":"C.java","path":"src/main/java/C.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.beans.factory.annotation.Value;
+                public class C {
+                    @Value("${a.kept}") private String kept;
+                }
+                """));
+        stubGithubListing("/repos/o/r/contents/src/main/java", secondBody);
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isZero();
+        assertThat(result.deleted()).isEqualTo(1);
+        assertThat(relationships.findValueInjectionsFor(s.getId()))
+                .extracting(ServiceValueInjection::memberName)
+                .containsExactly("kept");
+    }
+
+    @Test
+    void whenValueInjectionSpelDefaultChanges_thenNewObservationSupersedes() {
+        Service s = saveServiceWithRepo("value-evolve-svc", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        String first = """
+                [{"type":"file","name":"C.java","path":"src/main/java/C.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.beans.factory.annotation.Value;
+                public class C { @Value("${atlas.url}") private String url; }
+                """));
+        stubGithubListing("/repos/o/r/contents/src/main/java", first);
+        coordinator.refreshConfiguration(s.getId());
+
+        wireMock.resetAll();
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        String second = """
+                [{"type":"file","name":"C.java","path":"src/main/java/C.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.beans.factory.annotation.Value;
+                public class C { @Value("${atlas.url:http://default}") private String url; }
+                """));
+        stubGithubListing("/repos/o/r/contents/src/main/java", second);
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isEqualTo(1);
+        List<ServiceValueInjection> rows = relationships.findValueInjectionsFor(s.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).defaultValue()).isEqualTo("http://default");
+    }
+
+    @Test
+    void whenSecondRefreshWithIdenticalSourceTree_thenIdempotent() {
+        Service s = saveServiceWithRepo("idem-source-svc", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        String body = """
+                [{"type":"file","name":"AtlasProperties.java","path":"src/main/java/AtlasProperties.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.beans.factory.annotation.Value;
+                import org.springframework.boot.context.properties.ConfigurationProperties;
+                @ConfigurationProperties("atlas")
+                public class AtlasProperties {
+                    @Value("${atlas.url}") private String url;
+                    private String apiKey;
+                }
+                """));
+        stubGithubListing("/repos/o/r/contents/src/main/java", body);
+        coordinator.refreshConfiguration(s.getId());
+
+        wireMock.resetAll();
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        stubGithubListing("/repos/o/r/contents/src/main/java", body);
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+    }
+
+    @Test
+    void whenPropertiesAndSourceTreeBothPresent_thenBothPassesPersistData() {
+        Service s = saveServiceWithRepo("mixed-svc", "https://github.com/o/r", null);
+        stubGithubListing("/repos/o/r/contents/src/main/resources", """
+                [{"type":"file","name":"application.properties","path":"src/main/resources/application.properties",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("atlas.port=8080\n")));
+        stubGithubListing("/repos/o/r/contents/src/main/java", """
+                [{"type":"file","name":"C.java","path":"src/main/java/C.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.beans.factory.annotation.Value;
+                public class C { @Value("${atlas.port}") private int port; }
+                """)));
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        // 1 properties row + 1 value-injection row = 2 created.
+        assertThat(result.created()).isEqualTo(2);
+        assertThat(relationships.findConfigPropertiesFor(s.getId())).hasSize(1);
+        assertThat(relationships.findValueInjectionsFor(s.getId())).hasSize(1);
+    }
+
+    @Test
+    void whenSourceTreeHasUnparseableFile_thenOtherFilesAreStillProcessed() {
+        Service s = saveServiceWithRepo("partial-svc", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        stubGithubListing("/repos/o/r/contents/src/main/java", """
+                [
+                  {"type":"file","name":"Bad.java","path":"src/main/java/Bad.java",
+                   "encoding":"base64","content":"%s"},
+                  {"type":"file","name":"Good.java","path":"src/main/java/Good.java",
+                   "encoding":"base64","content":"%s"}
+                ]
+                """.formatted(
+                b64("this is not valid java"),
+                b64("""
+                package com.example;
+                import org.springframework.beans.factory.annotation.Value;
+                public class Good { @Value("${atlas.k}") private String k; }
+                """)));
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isEqualTo(1);
+        assertThat(relationships.findValueInjectionsFor(s.getId()))
+                .extracting(ServiceValueInjection::enclosingClass)
+                .containsExactly("com.example.Good");
     }
 
     private void stubGithubFile(String path, String content) {

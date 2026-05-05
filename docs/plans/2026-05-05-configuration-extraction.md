@@ -114,6 +114,33 @@ Per-milestone test counts above are estimates; the floor is "every observable be
 
 ## Reflections
 
+### M2 reflection (2026-05-05, session 4)
+
+**What's working**
+
+- Extending `refreshConfiguration` rather than splitting into a sibling endpoint kept the surface clean — one REST call now covers properties + `@Value` + `@ConfigurationProperties`. The two-pass shape (properties pass, then source-tree pass, both feeding into the same `created`/`deleted` counters and one audit row) avoided per-pass plumbing.
+- The plan called for three tables (separate child table for `@ConfigurationProperties` components). Deviated to the JSON-on-parent pattern (`components TEXT` carrying `[{name, declaredType}, ...]`) used by `service_beans.public_methods` and `service_modules.declared_deps`. Append-only-with-presence stays clean: a tombstone observation captures the whole component set atomically without orphaning child rows. Two tables instead of three, one fewer `Insert*` writer to maintain.
+- The `JavaConfigurationExtractor` returns a single `ConfigurationExtractionResult` with both lists from one AST parse. Mirrors `JavaBeanExtractor` shape but the combined-output record kept the call site at the coordinator level a single line per source file. Test isolation worked too — the extractor has no Spring context dependencies, so unit tests run in milliseconds.
+- The malformed-SpEL tolerance (verbatim raw + empty key when the regex doesn't match) is the right level of strictness for ownership analysis. Tested via `whenValueAnnotationHasMalformedSpel_thenInjectionIsCapturedWithEmptyKeyPath` — the row exists, the renderer can flag it visually, no parser exception bubbles up.
+- The +5/table domain-repo test precedent from the M1 reflection held: M2 added 8 domain repo tests (4 + 4) without scope creep. Carry-forward predicting tests landed.
+
+**What's not / friction**
+
+- Hit a Flyway placeholder-substitution bug on V27: a literal `${...}` in an SQL comment is treated as a Flyway placeholder reference. `Caused by: FlywayException: No value provided for placeholder: ${...}`. Worked around by rephrasing the comment ("verbatim SpEL expression" instead of literal `${...}`). Worth carrying forward: avoid `${...}` syntax in migration-file comments. Alternative: configure `spring.flyway.placeholder-replacement=false` globally — bigger change with more blast radius, deferred.
+- The "JPA entity" terminology in the plan's M2 step (item 8 — "JPA entities + repositories") was wrong again, same as M1. The project uses immutable record + JdbcTemplate. Worth fixing the plan-doc terminology proactively if M3 / M4 mention "JPA entity" again.
+- Plan estimated 15-20 tests for M2; actual is 29 (8 domain + 14 extractor + 7 coordinator). Same overage shape as M1 — domain-repo tests not estimated, extractor tests slightly above the upper bound. The +5/table-floor heuristic is now well-calibrated; M3 estimate should be 15-20 (12-14 extractor target was the plan's number) plus +5 domain.
+- The `BEANS_SOURCE = 'source-tree'` constant carries through M2 reads — when filtering live observations to "rows produced by source-tree extraction," the literal source matters. Could alias as `CONFIG_TREE_SOURCE` for clarity, but the value is identical and reusing the constant prevents drift. Left as-is; mention in M3 in case the source CHECK list grows.
+
+**Resumable summary**
+
+Branch `main`, commit pending (M2.5). Test counts: project total 543 (was 506 at end of M1 — net +37). atlas-domain 62 (54 + 4 `service_value_injections` + 4 `service_configuration_properties_types`); atlas-intake 170 (149 + 14 `JavaConfigurationExtractorTest` + 7 `CodeSyncCoordinatorTest` M2 cases); atlas-mcp 24; atlas-confluence-sync 287. New artifacts: V27 migration creating `service_value_injections` + `service_configuration_properties_types` (JSON-TEXT components — deviated from plan's child-table design, see "What's working" above); `ServiceValueInjection` + `ServiceConfigurationPropertiesType` records + insert/tombstone/find-current methods on `ServiceRelationshipsRepository`; `ValueInjectionRecord` + `ConfigurationPropertiesTypeRecord` (with nested `Component`) + `ConfigurationExtractionResult` + `JavaConfigurationExtractor` (JavaParser AST visitor pinned to JAVA_21, single-pass extraction emitting both lists); `CodeSyncCoordinator.refreshConfiguration` extended with a second pass walking `{module_path}/src/main/java` and diffing against live observations; existing REST endpoint `POST /api/code-sync/refresh-configuration/{serviceId}` covers it (no new endpoint, controller-test backfill from M1 already covers this path).
+
+**M2 success criteria**: ✅ criterion 2 (`@Value` injection sites captured), ✅ criterion 3 (`@ConfigurationProperties` types captured), ✅ criterion 8 (append-only with presence for both new tables), ✅ criterion 9 (MariaDB portable — V27 uses the same idioms as V22/V23/V26).
+
+**Next**: M3 — `@Enable*` annotation extraction (V28 + `JavaEnableAnnotationExtractor` + same-repo javadoc resolution + extends `refreshConfiguration` further). Estimate revised: 15-19 tests (10-14 extractor target + 5 domain repo).
+
+---
+
 ### M1 reflection (2026-05-05, session 4)
 
 **What's working**

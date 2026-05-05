@@ -919,6 +919,152 @@ public class ServiceRelationshipsRepository {
                 rs.getString("description"));
     }
 
+    // --- service_value_injections (Phase 5.9 M2 — append-only from day one)
+
+    /**
+     * Append one {@code @Value} injection-site observation. Defaults to
+     * {@code presence='present'} with source {@code 'source-tree'}.
+     * {@code modulePath} must be non-null — pass {@code ""} for root-rooted
+     * services.
+     */
+    public UUID insertValueInjection(UUID serviceId, String modulePath,
+                                      String enclosingClass, String memberName,
+                                      String memberKind, String rawSpel,
+                                      String keyPath, String defaultValue) {
+        return insertValueInjection(serviceId, modulePath, enclosingClass, memberName,
+                memberKind, rawSpel, keyPath, defaultValue, "source-tree", "present");
+    }
+
+    public UUID insertValueInjection(UUID serviceId, String modulePath,
+                                      String enclosingClass, String memberName,
+                                      String memberKind, String rawSpel,
+                                      String keyPath, String defaultValue,
+                                      String source, String presence) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO service_value_injections " +
+                        "(id, service_id, module_path, enclosing_class, member_name, member_kind, " +
+                        " raw_spel, key_path, default_value, source, presence) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                id, serviceId, modulePath == null ? "" : modulePath,
+                enclosingClass, memberName, memberKind,
+                rawSpel, keyPath, defaultValue, source, presence);
+        return id;
+    }
+
+    /** Append a {@code presence='absent'} tombstone for a @Value site no longer in the source tree. */
+    public UUID writeValueInjectionTombstone(UUID serviceId, String modulePath,
+                                              String enclosingClass, String memberName,
+                                              String memberKind, String source) {
+        // raw_spel + key_path are NOT NULL on the table; carry empty strings
+        // for the tombstone — the renderer never surfaces tombstones.
+        return insertValueInjection(serviceId, modulePath, enclosingClass, memberName,
+                memberKind, "", "", null, source, "absent");
+    }
+
+    /**
+     * Live view: latest observation per
+     * {@code (service_id, module_path, enclosing_class, member_name, member_kind)}
+     * where {@code presence='present'}. Used by the Configuration page renderer.
+     */
+    public List<ServiceValueInjection> findValueInjectionsFor(UUID serviceId) {
+        return jdbc.query(
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, module_path, enclosing_class, member_name, member_kind, " +
+                        "         raw_spel, key_path, default_value, source, presence, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, module_path, enclosing_class, " +
+                        "                            member_name, member_kind " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM service_value_injections " +
+                        ") " +
+                        "SELECT id, service_id, module_path, enclosing_class, member_name, member_kind, " +
+                        "       raw_spel, key_path, default_value, source " +
+                        "FROM latest " +
+                        "WHERE rn = 1 AND presence = 'present' AND service_id = ? " +
+                        "ORDER BY enclosing_class, member_name",
+                (rs, i) -> new ServiceValueInjection(
+                        (UUID) rs.getObject("id"),
+                        (UUID) rs.getObject("service_id"),
+                        rs.getString("module_path"),
+                        rs.getString("enclosing_class"),
+                        rs.getString("member_name"),
+                        rs.getString("member_kind"),
+                        rs.getString("raw_spel"),
+                        rs.getString("key_path"),
+                        rs.getString("default_value"),
+                        rs.getString("source")),
+                serviceId);
+    }
+
+    // --- service_configuration_properties_types (Phase 5.9 M2 — append-only from day one)
+
+    /**
+     * Append one {@code @ConfigurationProperties} type observation. Defaults
+     * to {@code presence='present'} with source {@code 'source-tree'}.
+     */
+    public UUID insertConfigurationPropertiesType(UUID serviceId, String modulePath,
+                                                   String enclosingClass, String prefix,
+                                                   String typeKind, String components) {
+        return insertConfigurationPropertiesType(serviceId, modulePath, enclosingClass,
+                prefix, typeKind, components, "source-tree", "present");
+    }
+
+    public UUID insertConfigurationPropertiesType(UUID serviceId, String modulePath,
+                                                   String enclosingClass, String prefix,
+                                                   String typeKind, String components,
+                                                   String source, String presence) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO service_configuration_properties_types " +
+                        "(id, service_id, module_path, enclosing_class, prefix, type_kind, " +
+                        " components, source, presence) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                id, serviceId, modulePath == null ? "" : modulePath,
+                enclosingClass, prefix == null ? "" : prefix,
+                typeKind, components, source, presence);
+        return id;
+    }
+
+    /** Append a {@code presence='absent'} tombstone for a @ConfigurationProperties type no longer in the source tree. */
+    public UUID writeConfigurationPropertiesTypeTombstone(UUID serviceId, String modulePath,
+                                                          String enclosingClass, String source) {
+        // type_kind is required by the table CHECK; carry 'class' as a sensible
+        // tombstone default — the renderer never surfaces tombstones.
+        return insertConfigurationPropertiesType(serviceId, modulePath, enclosingClass,
+                "", "class", null, source, "absent");
+    }
+
+    /**
+     * Live view: latest observation per
+     * {@code (service_id, module_path, enclosing_class)} where
+     * {@code presence='present'}. Used by the Configuration page renderer.
+     */
+    public List<ServiceConfigurationPropertiesType> findConfigurationPropertiesTypesFor(UUID serviceId) {
+        return jdbc.query(
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, module_path, enclosing_class, prefix, type_kind, " +
+                        "         components, source, presence, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, module_path, enclosing_class " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM service_configuration_properties_types " +
+                        ") " +
+                        "SELECT id, service_id, module_path, enclosing_class, prefix, type_kind, " +
+                        "       components, source " +
+                        "FROM latest " +
+                        "WHERE rn = 1 AND presence = 'present' AND service_id = ? " +
+                        "ORDER BY prefix, enclosing_class",
+                (rs, i) -> new ServiceConfigurationPropertiesType(
+                        (UUID) rs.getObject("id"),
+                        (UUID) rs.getObject("service_id"),
+                        rs.getString("module_path"),
+                        rs.getString("enclosing_class"),
+                        rs.getString("prefix"),
+                        rs.getString("type_kind"),
+                        rs.getString("components"),
+                        rs.getString("source")),
+                serviceId);
+    }
+
     // --- service_config_properties (Phase 5.9 M1 — append-only from day one)
 
     /**

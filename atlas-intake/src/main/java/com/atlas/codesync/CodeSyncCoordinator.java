@@ -4,10 +4,12 @@ import com.atlas.services.ApiSummary;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceBean;
 import com.atlas.services.ServiceConfigProperty;
+import com.atlas.services.ServiceConfigurationPropertiesType;
 import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceModule;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
+import com.atlas.services.ServiceValueInjection;
 import com.atlas.services.TestScenario;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -64,6 +66,7 @@ public class CodeSyncCoordinator {
     private final JavaBeanExtractor beanExtractor;
     private final PomParser pomParser;
     private final PropertiesFileParser propertiesParser;
+    private final JavaConfigurationExtractor configurationExtractor;
     private final String orgGroupPrefix;
 
     public CodeSyncCoordinator(ServiceRepository services,
@@ -75,6 +78,7 @@ public class CodeSyncCoordinator {
                                JavaBeanExtractor beanExtractor,
                                PomParser pomParser,
                                PropertiesFileParser propertiesParser,
+                               JavaConfigurationExtractor configurationExtractor,
                                @Value("${atlas.code-sync.org-group-prefix:com.atlas}") String orgGroupPrefix) {
         this.services = services;
         this.relationships = relationships;
@@ -85,6 +89,7 @@ public class CodeSyncCoordinator {
         this.beanExtractor = beanExtractor;
         this.pomParser = pomParser;
         this.propertiesParser = propertiesParser;
+        this.configurationExtractor = configurationExtractor;
         this.orgGroupPrefix = orgGroupPrefix;
     }
 
@@ -554,22 +559,33 @@ public class CodeSyncCoordinator {
     }
 
     /**
-     * Refresh the property-key observations for one service from the
-     * Spring Boot configuration files in its repo (Phase 5.9 M1). Walks
-     * {@code {module_path}/src/main/resources/} non-recursively, parses every
-     * {@code application*.{properties,yml,yaml}} file via
-     * {@link PropertiesFileParser}, and upserts {@code service_config_properties}
-     * rows tagged {@code source='properties-file'}. Append-only — disappeared
-     * keys are tombstoned.
+     * Refresh the configuration observations for one service from its repo
+     * (Phase 5.9 M1 + M2). Two passes share this method:
      *
-     * <p>Atomic: fetch + parse complete before any DB mutation; the mutation
-     * is wrapped in a transaction so a partial failure rolls back.
+     * <ol>
+     *   <li><b>Properties / YAML files</b> — walks {@code {module_path}/src/main/resources/}
+     *       non-recursively, parses every {@code application*.{properties,yml,yaml}}
+     *       file via {@link PropertiesFileParser}, and upserts
+     *       {@code service_config_properties} rows tagged {@code source='properties-file'}.</li>
+     *   <li><b>Source tree</b> — walks {@code {module_path}/src/main/java/}
+     *       recursively, runs {@link JavaConfigurationExtractor} per file, and
+     *       upserts {@code service_value_injections} +
+     *       {@code service_configuration_properties_types} rows tagged
+     *       {@code source='source-tree'}.</li>
+     * </ol>
      *
-     * <p>Limits documented at the plan level (DD-016 / DD-017):
-     * {@code spring.config.import} chained imports are not followed; relaxed
-     * binding aliases are not normalised.
+     * <p>Append-only — disappeared keys / injection sites / types are
+     * tombstoned. Atomic: fetch + parse complete before any DB mutation; the
+     * mutation is wrapped in a transaction so a partial failure rolls back.
      *
-     * @return counts of inserted (created) and tombstoned (deleted) writes.
+     * <p>Limits documented at the plan level: DD-016 ({@code spring.config.import}
+     * chained imports not followed); DD-017 (relaxed binding aliases not
+     * normalised). M2 inherits these — properties keys are recorded verbatim,
+     * and {@code @Value} cross-link to properties rows is not yet computed
+     * (M4 renderer territory).
+     *
+     * @return counts of inserted (created) and tombstoned (deleted) writes
+     *         summed across both passes.
      */
     @Transactional
     public CodeSyncResult refreshConfiguration(UUID serviceId) {
@@ -582,45 +598,104 @@ public class CodeSyncCoordinator {
         }
         RepoFileFetcher.GitHubRepoCoords coords = RepoFileFetcher.parseGitHubUrl(repoUrl);
         String resourcesPath = resourcesPathFor(service);
+        String mainSourcesPath = mainSourcesPathFor(service);
+        String modulePathTag = service.getModulePath() == null ? "" : service.getModulePath();
 
-        // Fetch + parse first; only mutate the DB on success.
-        List<RepoFile> files = repoFetcher.listFilesIn(coords.owner(), coords.repo(), resourcesPath);
-        List<ParsedConfigEntry> fresh = new ArrayList<>();
-        for (RepoFile f : files) {
+        // ---- Pass 1: properties / YAML files ----------------------------
+        List<RepoFile> propsFiles = repoFetcher.listFilesIn(coords.owner(), coords.repo(), resourcesPath);
+        List<ParsedConfigEntry> freshProps = new ArrayList<>();
+        for (RepoFile f : propsFiles) {
             String filename = filenameOf(f.path());
             for (PropertyEntry entry : propertiesParser.parse(f.content(), filename)) {
-                fresh.add(new ParsedConfigEntry(
+                freshProps.add(new ParsedConfigEntry(
                         entry.keyPath(), entry.value(), entry.profile(), filename));
             }
         }
 
-        // Live view: latest observation per (key_path, profile, source_file)
-        // where presence='present'. Append-only diff vs `fresh`.
-        Map<String, ServiceConfigProperty> live = new HashMap<>();
-        for (ServiceConfigProperty p : relationships.findConfigPropertiesFor(serviceId)) {
-            if (CONFIG_SOURCE.equals(p.source())) {
-                live.put(configKey(p.keyPath(), p.profile(), p.sourceFile()), p);
+        // ---- Pass 2: source tree (@Value + @ConfigurationProperties) ----
+        List<RepoFile> sources = repoFetcher.listJavaSourcesUnder(coords.owner(), coords.repo(), mainSourcesPath);
+        List<ValueInjectionRecord> freshValues = new ArrayList<>();
+        List<ConfigurationPropertiesTypeRecord> freshConfigTypes = new ArrayList<>();
+        for (RepoFile f : sources) {
+            try {
+                ConfigurationExtractionResult er = configurationExtractor.extract(f.content());
+                freshValues.addAll(er.valueInjections());
+                freshConfigTypes.addAll(er.configurationPropertiesTypes());
+            } catch (IllegalArgumentException e) {
+                log.warn("Skipping unparseable config-extraction source {}: {}", f.path(), e.getMessage());
             }
         }
 
+        // ---- Diff + write: properties ----------------------------------
+        Map<String, ServiceConfigProperty> liveProps = new HashMap<>();
+        for (ServiceConfigProperty p : relationships.findConfigPropertiesFor(serviceId)) {
+            if (CONFIG_SOURCE.equals(p.source())) {
+                liveProps.put(configKey(p.keyPath(), p.profile(), p.sourceFile()), p);
+            }
+        }
         int created = 0;
-        for (ParsedConfigEntry e : fresh) {
+        for (ParsedConfigEntry e : freshProps) {
             String k = configKey(e.keyPath(), e.profile(), e.sourceFile());
-            ServiceConfigProperty current = live.remove(k);
-            if (current == null) {
-                relationships.insertConfigProperty(serviceId, e.keyPath(), e.value(),
-                        e.sourceFile(), e.profile());
-                created++;
-            } else if (!equalsNullable(current.value(), e.value())) {
+            ServiceConfigProperty current = liveProps.remove(k);
+            if (current == null || !equalsNullable(current.value(), e.value())) {
                 relationships.insertConfigProperty(serviceId, e.keyPath(), e.value(),
                         e.sourceFile(), e.profile());
                 created++;
             }
         }
-        int deleted = live.size();
-        for (ServiceConfigProperty stale : live.values()) {
+        int deleted = liveProps.size();
+        for (ServiceConfigProperty stale : liveProps.values()) {
             relationships.writeConfigPropertyTombstone(serviceId,
                     stale.keyPath(), stale.sourceFile(), stale.profile(), CONFIG_SOURCE);
+        }
+
+        // ---- Diff + write: @Value injections ---------------------------
+        Map<String, ServiceValueInjection> liveValues = new HashMap<>();
+        for (ServiceValueInjection v : relationships.findValueInjectionsFor(serviceId)) {
+            if (BEANS_SOURCE.equals(v.source())) {
+                liveValues.put(valueKey(v.modulePath(), v.enclosingClass(),
+                        v.memberName(), v.memberKind()), v);
+            }
+        }
+        for (ValueInjectionRecord rec : freshValues) {
+            String k = valueKey(modulePathTag, rec.enclosingClass(),
+                    rec.memberName(), rec.memberKind());
+            ServiceValueInjection current = liveValues.remove(k);
+            if (current == null || valueChanged(current, rec)) {
+                relationships.insertValueInjection(serviceId, modulePathTag,
+                        rec.enclosingClass(), rec.memberName(), rec.memberKind(),
+                        rec.rawSpel(), rec.keyPath(), rec.defaultValue());
+                created++;
+            }
+        }
+        deleted += liveValues.size();
+        for (ServiceValueInjection stale : liveValues.values()) {
+            relationships.writeValueInjectionTombstone(serviceId, stale.modulePath(),
+                    stale.enclosingClass(), stale.memberName(), stale.memberKind(),
+                    BEANS_SOURCE);
+        }
+
+        // ---- Diff + write: @ConfigurationProperties types --------------
+        Map<String, ServiceConfigurationPropertiesType> liveTypes = new HashMap<>();
+        for (ServiceConfigurationPropertiesType t : relationships.findConfigurationPropertiesTypesFor(serviceId)) {
+            if (BEANS_SOURCE.equals(t.source())) {
+                liveTypes.put(typeKey(t.modulePath(), t.enclosingClass()), t);
+            }
+        }
+        for (ConfigurationPropertiesTypeRecord rec : freshConfigTypes) {
+            String componentsJson = serializeComponents(rec.components());
+            String k = typeKey(modulePathTag, rec.enclosingClass());
+            ServiceConfigurationPropertiesType current = liveTypes.remove(k);
+            if (current == null || configTypeChanged(current, rec, componentsJson)) {
+                relationships.insertConfigurationPropertiesType(serviceId, modulePathTag,
+                        rec.enclosingClass(), rec.prefix(), rec.typeKind(), componentsJson);
+                created++;
+            }
+        }
+        deleted += liveTypes.size();
+        for (ServiceConfigurationPropertiesType stale : liveTypes.values()) {
+            relationships.writeConfigurationPropertiesTypeTombstone(serviceId,
+                    stale.modulePath(), stale.enclosingClass(), BEANS_SOURCE);
         }
 
         if (created + deleted > 0) {
@@ -628,6 +703,37 @@ public class CodeSyncCoordinator {
                     "Configuration refresh: created=" + created + " deleted=" + deleted);
         }
         return new CodeSyncResult(created, 0, deleted, 0);
+    }
+
+    private static String valueKey(String modulePath, String enclosingClass,
+                                    String memberName, String memberKind) {
+        return modulePath + "|" + enclosingClass + "|" + memberName + "|" + memberKind;
+    }
+
+    private static String typeKey(String modulePath, String enclosingClass) {
+        return modulePath + "|" + enclosingClass;
+    }
+
+    private static boolean valueChanged(ServiceValueInjection current, ValueInjectionRecord fresh) {
+        return !equalsNullable(current.rawSpel(), fresh.rawSpel())
+                || !equalsNullable(current.keyPath(), fresh.keyPath())
+                || !equalsNullable(current.defaultValue(), fresh.defaultValue());
+    }
+
+    private static boolean configTypeChanged(ServiceConfigurationPropertiesType current,
+                                              ConfigurationPropertiesTypeRecord fresh,
+                                              String freshComponentsJson) {
+        return !equalsNullable(current.prefix(), fresh.prefix())
+                || !equalsNullable(current.typeKind(), fresh.typeKind())
+                || !equalsNullable(current.components(), freshComponentsJson);
+    }
+
+    private static String serializeComponents(List<ConfigurationPropertiesTypeRecord.Component> components) {
+        try {
+            return BEANS_MAPPER.writeValueAsString(components);
+        } catch (JsonProcessingException e) {
+            return "[]";
+        }
     }
 
     private static String resourcesPathFor(Service service) {

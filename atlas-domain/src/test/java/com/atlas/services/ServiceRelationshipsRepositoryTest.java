@@ -354,6 +354,136 @@ class ServiceRelationshipsRepositoryTest {
         assertThat(afterClear.confluencePageId()).isNull();
     }
 
+    // ---- service_value_injections (Phase 5.9 M2) -------------------------
+
+    @Test
+    void whenValueInjectionIsInserted_thenLiveViewReturnsItWithKeyPathAndDefault() {
+        Service svc = save("value-svc", "team");
+
+        relationships.insertValueInjection(svc.getId(), "",
+                "com.example.MyConfig", "apiKey", "field",
+                "${atlas.api.key:fallback}", "atlas.api.key", "fallback");
+
+        java.util.List<ServiceValueInjection> rows = relationships.findValueInjectionsFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        ServiceValueInjection v = rows.get(0);
+        assertThat(v.enclosingClass()).isEqualTo("com.example.MyConfig");
+        assertThat(v.memberName()).isEqualTo("apiKey");
+        assertThat(v.memberKind()).isEqualTo("field");
+        assertThat(v.rawSpel()).isEqualTo("${atlas.api.key:fallback}");
+        assertThat(v.keyPath()).isEqualTo("atlas.api.key");
+        assertThat(v.defaultValue()).isEqualTo("fallback");
+        assertThat(v.source()).isEqualTo("source-tree");
+    }
+
+    @Test
+    void whenValueInjectionHasMultipleObservations_thenLiveViewReturnsLatest() {
+        Service svc = save("value-evolve", "team");
+
+        relationships.insertValueInjection(svc.getId(), "",
+                "com.example.C", "url", "field", "${atlas.url}", "atlas.url", null);
+        relationships.insertValueInjection(svc.getId(), "",
+                "com.example.C", "url", "field", "${atlas.url:http://default}",
+                "atlas.url", "http://default");
+
+        java.util.List<ServiceValueInjection> rows = relationships.findValueInjectionsFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).defaultValue()).isEqualTo("http://default");
+    }
+
+    @Test
+    void whenValueInjectionIsTombstoned_thenLiveViewExcludesIt() {
+        Service svc = save("value-tombstone", "team");
+
+        relationships.insertValueInjection(svc.getId(), "",
+                "com.example.Old", "field", "field", "${k}", "k", null);
+        relationships.writeValueInjectionTombstone(svc.getId(), "",
+                "com.example.Old", "field", "field", "source-tree");
+
+        assertThat(relationships.findValueInjectionsFor(svc.getId())).isEmpty();
+    }
+
+    @Test
+    void whenSameClassHasFieldAndConstructorParamWithSameKey_thenBothAreLiveObservations() {
+        // member_kind disambiguates: one class can have both an @Value field
+        // and an @Value constructor parameter that happen to share a name.
+        Service svc = save("value-multi-kind", "team");
+
+        relationships.insertValueInjection(svc.getId(), "",
+                "com.example.C", "url", "field", "${atlas.url}", "atlas.url", null);
+        relationships.insertValueInjection(svc.getId(), "",
+                "com.example.C", "url", "constructor-parameter",
+                "${atlas.url}", "atlas.url", null);
+
+        java.util.List<ServiceValueInjection> rows = relationships.findValueInjectionsFor(svc.getId());
+        assertThat(rows).hasSize(2);
+        assertThat(rows).extracting(ServiceValueInjection::memberKind)
+                .containsExactlyInAnyOrder("field", "constructor-parameter");
+    }
+
+    // ---- service_configuration_properties_types (Phase 5.9 M2) -----------
+
+    @Test
+    void whenConfigurationPropertiesTypeIsInserted_thenLiveViewReturnsItWithPrefixAndComponents() {
+        Service svc = save("cfg-type-svc", "team");
+
+        relationships.insertConfigurationPropertiesType(svc.getId(), "",
+                "com.example.AtlasProperties", "atlas", "record",
+                "[{\"name\":\"apiKey\",\"declaredType\":\"String\"}," +
+                        "{\"name\":\"port\",\"declaredType\":\"int\"}]");
+
+        java.util.List<ServiceConfigurationPropertiesType> rows =
+                relationships.findConfigurationPropertiesTypesFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        ServiceConfigurationPropertiesType t = rows.get(0);
+        assertThat(t.enclosingClass()).isEqualTo("com.example.AtlasProperties");
+        assertThat(t.prefix()).isEqualTo("atlas");
+        assertThat(t.typeKind()).isEqualTo("record");
+        assertThat(t.components()).contains("\"apiKey\"").contains("\"port\"");
+        assertThat(t.source()).isEqualTo("source-tree");
+    }
+
+    @Test
+    void whenConfigurationPropertiesTypeHasMultipleObservations_thenLiveViewReturnsLatest() {
+        Service svc = save("cfg-type-evolve", "team");
+
+        relationships.insertConfigurationPropertiesType(svc.getId(), "",
+                "com.example.P", "old.prefix", "class", "[]");
+        relationships.insertConfigurationPropertiesType(svc.getId(), "",
+                "com.example.P", "new.prefix", "class", "[]");
+
+        java.util.List<ServiceConfigurationPropertiesType> rows =
+                relationships.findConfigurationPropertiesTypesFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).prefix()).isEqualTo("new.prefix");
+    }
+
+    @Test
+    void whenConfigurationPropertiesTypeIsTombstoned_thenLiveViewExcludesIt() {
+        Service svc = save("cfg-type-tombstone", "team");
+
+        relationships.insertConfigurationPropertiesType(svc.getId(), "",
+                "com.example.Old", "old", "record", "[]");
+        relationships.writeConfigurationPropertiesTypeTombstone(svc.getId(), "",
+                "com.example.Old", "source-tree");
+
+        assertThat(relationships.findConfigurationPropertiesTypesFor(svc.getId())).isEmpty();
+    }
+
+    @Test
+    void whenConfigurationPropertiesPrefixIsEmpty_thenItIsStoredAndReturnedAsEmptyString() {
+        // @ConfigurationProperties with no prefix (annotation accepts none).
+        Service svc = save("cfg-type-no-prefix", "team");
+
+        relationships.insertConfigurationPropertiesType(svc.getId(), "",
+                "com.example.Top", "", "class", "[]");
+
+        java.util.List<ServiceConfigurationPropertiesType> rows =
+                relationships.findConfigurationPropertiesTypesFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).prefix()).isEmpty();
+    }
+
     // ---- service_config_properties (Phase 5.9 M1) ------------------------
 
     @Test

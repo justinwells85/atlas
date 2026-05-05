@@ -124,7 +124,7 @@ Goal: introduce a `WikiSink` abstraction with a `LocalMarkdownWikiSink` implemen
 Goal: surface application configuration deep enough to answer "what does this service actually run with?" Closes the largest remaining gap for the ownership-analysis mission — services that lean heavily on in-house `@Enable*` annotations or external config sources are otherwise opaque to today's Atlas.
 
 - [x] M1 — `application.properties` / `application.yml` parsing, including profile-specific overrides (V26 `service_config_properties` + `PropertiesFileParser` + `refreshConfiguration` coordinator + `POST /api/code-sync/refresh-configuration/{serviceId}`; DD-016 + DD-017 captured)
-- [ ] M2 — `@Value` / `@ConfigurationProperties` extraction from source
+- [x] M2 — `@Value` / `@ConfigurationProperties` extraction from source (V27 adds `service_value_injections` + `service_configuration_properties_types` with JSON-encoded components on parent row; `JavaConfigurationExtractor` AST visitor; `refreshConfiguration` extended with a second pass walking `{module_path}/src/main/java`)
 - [ ] M3 — `@Enable*` annotation surface (which annotations the service uses, what each one declares — minimum: name + javadoc + module of origin)
 - [ ] M4 — Per-service Configuration page; L2 Section 8 "Internals" gains a Configuration sub-bullet
 
