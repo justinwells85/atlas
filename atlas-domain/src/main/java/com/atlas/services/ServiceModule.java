@@ -32,5 +32,17 @@ public record ServiceModule(
         String frameworkVersion,
         String declaredDeps,
         String source,
-        String confluencePageId) {
+        String confluencePageId,
+        String localMarkdownPath) {
+
+    /** Pre-V25 convenience — defaults the local-markdown ref to null. */
+    public ServiceModule(UUID id, UUID serviceId, String modulePath, String parentPath,
+                         String groupId, String artifactId, String version, String packaging,
+                         String languageVersion, String framework, String frameworkVersion,
+                         String declaredDeps, String source, String confluencePageId) {
+        this(id, serviceId, modulePath, parentPath,
+                groupId, artifactId, version, packaging,
+                languageVersion, framework, frameworkVersion,
+                declaredDeps, source, confluencePageId, null);
+    }
 }

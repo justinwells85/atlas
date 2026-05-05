@@ -41,6 +41,23 @@ public interface ServiceRepository extends JpaRepository<Service, UUID> {
             nativeQuery = true)
     void clearConfluencePageId(@Param("id") UUID id);
 
+    /** Null services.local_markdown_path after the Markdown sink deletes the file. M3 of Phase 5.8. */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE services SET local_markdown_path = NULL WHERE id = :id",
+            nativeQuery = true)
+    void clearLocalMarkdownPath(@Param("id") UUID id);
+
+    /**
+     * Find every soft-deleted service that still has a local_markdown_path.
+     * Mirrors {@link #findSoftDeletedWithConfluencePage()} for the
+     * Markdown sink's cleanup pass (Phase 5.8 M3).
+     */
+    @Query(value = "SELECT * FROM services " +
+            "WHERE deleted_at IS NOT NULL AND local_markdown_path IS NOT NULL",
+            nativeQuery = true)
+    List<Service> findSoftDeletedWithLocalMarkdownPath();
+
     /**
      * Look up a service by name *including* soft-deleted rows — bypasses the
      * entity-level {@code @SQLRestriction} filter. Used by intake to detect

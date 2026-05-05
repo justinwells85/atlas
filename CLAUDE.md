@@ -2,13 +2,18 @@
 
 ## Project Context
 
-**WHY**: Service documentation in our organization is manually maintained, frequently stale, and lives in disconnected places. Atlas auto-generates and updates a Confluence wiki of service inventory (APIs, dependencies, owners, databases) from a central database, reducing manual effort and keeping documentation current.
+**WHY (dual mission as of 2026-05-05):**
+
+1. *Original framing — service catalog.* Service documentation in our organization is manually maintained, frequently stale, and lives in disconnected places. Atlas auto-generates and updates a wiki of service inventory (APIs, dependencies, owners, databases) from a central database, reducing manual effort and keeping documentation current.
+2. *Ownership-analysis tool.* Atlas is also being used to deeply document individual services for ownership transition. The first real target is a confidential Spring Integration application owned by the team. The mission goal is to surface **business rules, configurations, and data processes** at enough depth that the documentation Atlas produces becomes the team's ownership reference. **Depth-over-breadth** is the priority for this mission.
+
+The two missions overlap (both want rich per-service documentation), but the ownership mission constrains the architecture: confidential targets require a **local-only wiki sink** (no external Confluence egress), and depth requirements drive new extractors (Spring Integration drill-down, configuration extraction). Confidential codebases analysed by Atlas, and any operational details that identify them, must never egress to public services or repositories.
 
 **WHAT**: A Spring Boot application that:
 1. Collects structured data about services via an AI-assisted intake pipeline
 2. Stores it in a central database (Postgres locally, MySQL/MariaDB in production)
 3. Exposes the data via a Model Context Protocol (MCP) server
-4. Auto-syncs to Confluence pages
+4. Renders rich per-service documentation through a `WikiSink` abstraction with multiple sink implementations (Confluence Cloud for the public dogfood; local Markdown for confidential targets — the latter targeting Obsidian)
 
 **HOW**: See `docs/architecture.md` for the system overview, `docs/schema.md` for the data model, `docs/confluence-template.md` for the output specification, `docs/roadmap.md` for current phase, and `docs/decisions.md` for the rationale behind key technology choices.
 

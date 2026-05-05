@@ -99,26 +99,27 @@ public class ServiceRelationshipsRepository {
     }
 
     /**
-     * Tombstone rows whose Confluence pages still need to be removed: latest
+     * Tombstone rows whose wiki pages still need to be removed: latest
      * observation per key is {@code presence='absent'} and carries a non-null
-     * {@code confluence_page_id}. Bypasses the live-only filter. Only includes
-     * tombstones whose owning service is itself still live (soft-deleted
-     * services are handled by {@code cleanupDeletedServices}).
+     * ref on at least one sink ({@code confluence_page_id} OR
+     * {@code local_markdown_path}). Bypasses the live-only filter. Only
+     * includes tombstones whose owning service is itself still live
+     * (soft-deleted services are handled by {@code cleanupDeletedServices}).
      */
     public List<SoftDeletedApiPage> findStaleApiPages() {
         return jdbc.query(
                 "WITH latest AS (" +
-                        "  SELECT id, service_id, method, path, source, presence, confluence_page_id, " +
+                        "  SELECT id, service_id, method, path, source, presence, confluence_page_id, local_markdown_path, " +
                         "         ROW_NUMBER() OVER (PARTITION BY service_id, method, path, source " +
                         "                            ORDER BY observed_at DESC, id DESC) AS rn " +
                         "  FROM apis " +
                         ") " +
-                        "SELECT l.id, l.method, l.path, l.confluence_page_id, " +
+                        "SELECT l.id, l.method, l.path, l.confluence_page_id, l.local_markdown_path, " +
                         "       s.id AS service_id, s.name AS service_name " +
                         "FROM latest l " +
                         "JOIN services s ON s.id = l.service_id " +
                         "WHERE l.rn = 1 AND l.presence = 'absent' " +
-                        "  AND l.confluence_page_id IS NOT NULL " +
+                        "  AND (l.confluence_page_id IS NOT NULL OR l.local_markdown_path IS NOT NULL) " +
                         "  AND s.deleted_at IS NULL " +
                         "ORDER BY s.name, l.method, l.path",
                 (rs, i) -> new SoftDeletedApiPage(
@@ -126,6 +127,7 @@ public class ServiceRelationshipsRepository {
                         rs.getString("method"),
                         rs.getString("path"),
                         rs.getString("confluence_page_id"),
+                        rs.getString("local_markdown_path"),
                         (UUID) rs.getObject("service_id"),
                         rs.getString("service_name")));
     }
@@ -143,13 +145,13 @@ public class ServiceRelationshipsRepository {
         return jdbc.query(
                 "WITH latest AS (" +
                         "  SELECT id, service_id, path, method, auth_method, description, source, " +
-                        "         presence, confluence_page_id, openapi_snapshot, " +
+                        "         presence, confluence_page_id, local_markdown_path, openapi_snapshot, " +
                         "         ROW_NUMBER() OVER (PARTITION BY service_id, method, path, source " +
                         "                            ORDER BY observed_at DESC, id DESC) AS rn " +
                         "  FROM apis " +
                         ") " +
                         "SELECT i.id, i.path, i.method, i.auth_method, i.description, i.source, " +
-                        "       i.confluence_page_id, i.openapi_snapshot " +
+                        "       i.confluence_page_id, i.openapi_snapshot, i.local_markdown_path " +
                         "FROM latest i " +
                         "WHERE i.rn = 1 AND i.presence = 'present' " +
                         "  AND i.source = 'intake' AND i.service_id = ? " +
@@ -169,6 +171,17 @@ public class ServiceRelationshipsRepository {
         jdbc.update("UPDATE apis SET confluence_page_id = NULL WHERE id = ?", apiId);
     }
 
+    /** Stamp the local-markdown vault path on one api observation row. M3 of Phase 5.8. */
+    public void setApiLocalMarkdownPath(UUID apiId, String localMarkdownPath) {
+        jdbc.update("UPDATE apis SET local_markdown_path = ? WHERE id = ?",
+                localMarkdownPath, apiId);
+    }
+
+    /** Null an api row's local_markdown_path after the file is deleted. */
+    public void clearApiLocalMarkdownPath(UUID apiId) {
+        jdbc.update("UPDATE apis SET local_markdown_path = NULL WHERE id = ?", apiId);
+    }
+
     /**
      * SELECT clause + base FROM/WHERE for the apis live-view: latest
      * observation per {@code (service_id, method, path, source)} where
@@ -178,12 +191,13 @@ public class ServiceRelationshipsRepository {
     private static String liveApisSql() {
         return "WITH latest AS (" +
                 "  SELECT id, service_id, path, method, auth_method, description, source, " +
-                "         presence, confluence_page_id, openapi_snapshot, " +
+                "         presence, confluence_page_id, local_markdown_path, openapi_snapshot, " +
                 "         ROW_NUMBER() OVER (PARTITION BY service_id, method, path, source " +
                 "                            ORDER BY observed_at DESC, id DESC) AS rn " +
                 "  FROM apis " +
                 ") " +
-                "SELECT id, path, method, auth_method, description, source, confluence_page_id, openapi_snapshot " +
+                "SELECT id, path, method, auth_method, description, source, confluence_page_id, " +
+                "       openapi_snapshot, local_markdown_path " +
                 "FROM latest a " +
                 "WHERE a.rn = 1 AND a.presence = 'present'";
     }
@@ -197,7 +211,8 @@ public class ServiceRelationshipsRepository {
                 rs.getString("description"),
                 rs.getString("source"),
                 rs.getString("confluence_page_id"),
-                rs.getString("openapi_snapshot"));
+                rs.getString("openapi_snapshot"),
+                rs.getString("local_markdown_path"));
     }
 
     // --- service_test_scenarios (M3, append-only as of M3.5) -------------
@@ -368,6 +383,20 @@ public class ServiceRelationshipsRepository {
                 pageId, serviceId);
     }
 
+    /** Update services.tests_markdown_path after the Markdown sink writes the tests page. M3 of Phase 5.8. */
+    public void setServiceTestsMarkdownPath(UUID serviceId, String path) {
+        jdbc.update(
+                "UPDATE services SET tests_markdown_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                path, serviceId);
+    }
+
+    /** Update services.beans_markdown_path after the Markdown sink writes the beans page. M3 of Phase 5.8. */
+    public void setServiceBeansMarkdownPath(UUID serviceId, String path) {
+        jdbc.update(
+                "UPDATE services SET beans_markdown_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                path, serviceId);
+    }
+
     // --- service_beans (Phase 5.6 M3 — append-only from day one) -------
 
     /**
@@ -516,6 +545,18 @@ public class ServiceRelationshipsRepository {
                 moduleObservationId);
     }
 
+    /** Stamp the local-markdown vault path on one module observation row. M3 of Phase 5.8. */
+    public void setModuleLocalMarkdownPath(UUID moduleObservationId, String localMarkdownPath) {
+        jdbc.update("UPDATE service_modules SET local_markdown_path = ? WHERE id = ?",
+                localMarkdownPath, moduleObservationId);
+    }
+
+    /** Null a module observation row's local_markdown_path. */
+    public void clearModuleLocalMarkdownPath(UUID moduleObservationId) {
+        jdbc.update("UPDATE service_modules SET local_markdown_path = NULL WHERE id = ?",
+                moduleObservationId);
+    }
+
     /**
      * Tombstoned module rows whose Confluence pages still need removing:
      * latest observation per key is {@code presence='absent'} and carries a
@@ -525,23 +566,24 @@ public class ServiceRelationshipsRepository {
     public List<SoftDeletedModulePage> findStaleModulePages() {
         return jdbc.query(
                 "WITH latest AS (" +
-                        "  SELECT id, service_id, module_path, source, presence, confluence_page_id, " +
+                        "  SELECT id, service_id, module_path, source, presence, confluence_page_id, local_markdown_path, " +
                         "         ROW_NUMBER() OVER (PARTITION BY service_id, module_path, source " +
                         "                            ORDER BY observed_at DESC, id DESC) AS rn " +
                         "  FROM service_modules " +
                         ") " +
-                        "SELECT l.id, l.module_path, l.confluence_page_id, " +
+                        "SELECT l.id, l.module_path, l.confluence_page_id, l.local_markdown_path, " +
                         "       s.id AS service_id, s.name AS service_name " +
                         "FROM latest l " +
                         "JOIN services s ON s.id = l.service_id " +
                         "WHERE l.rn = 1 AND l.presence = 'absent' " +
-                        "  AND l.confluence_page_id IS NOT NULL " +
+                        "  AND (l.confluence_page_id IS NOT NULL OR l.local_markdown_path IS NOT NULL) " +
                         "  AND s.deleted_at IS NULL " +
                         "ORDER BY s.name, l.module_path",
                 (rs, i) -> new SoftDeletedModulePage(
                         (UUID) rs.getObject("id"),
                         rs.getString("module_path"),
                         rs.getString("confluence_page_id"),
+                        rs.getString("local_markdown_path"),
                         (UUID) rs.getObject("service_id"),
                         rs.getString("service_name")));
     }
@@ -550,14 +592,14 @@ public class ServiceRelationshipsRepository {
         return "WITH latest AS (" +
                 "  SELECT id, service_id, module_path, parent_path, group_id, artifact_id, version, " +
                 "         packaging, language_version, framework, framework_version, declared_deps, " +
-                "         source, presence, confluence_page_id, " +
+                "         source, presence, confluence_page_id, local_markdown_path, " +
                 "         ROW_NUMBER() OVER (PARTITION BY service_id, module_path, source " +
                 "                            ORDER BY observed_at DESC, id DESC) AS rn " +
                 "  FROM service_modules " +
                 ") " +
                 "SELECT id, service_id, module_path, parent_path, group_id, artifact_id, version, " +
                 "       packaging, language_version, framework, framework_version, declared_deps, " +
-                "       source, confluence_page_id " +
+                "       source, confluence_page_id, local_markdown_path " +
                 "FROM latest " +
                 "WHERE rn = 1 AND presence = 'present'";
     }
@@ -577,7 +619,8 @@ public class ServiceRelationshipsRepository {
                 rs.getString("framework_version"),
                 rs.getString("declared_deps"),
                 rs.getString("source"),
-                rs.getString("confluence_page_id"));
+                rs.getString("confluence_page_id"),
+                rs.getString("local_markdown_path"));
     }
 
     /** Insert one row in {@code api_consumers} linking an API to a consumer service. */

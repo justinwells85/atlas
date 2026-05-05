@@ -81,6 +81,15 @@ public class Service {
     @Column(name = "confluence_page_id")
     private String confluencePageId;
 
+    @Column(name = "local_markdown_path")
+    private String localMarkdownPath;
+
+    @Column(name = "tests_markdown_path")
+    private String testsMarkdownPath;
+
+    @Column(name = "beans_markdown_path")
+    private String beansMarkdownPath;
+
     @Column(name = "last_synced_to_confluence")
     private OffsetDateTime lastSyncedToConfluence;
 
@@ -154,6 +163,15 @@ public class Service {
 
     public String getConfluencePageId() { return confluencePageId; }
     public void setConfluencePageId(String confluencePageId) { this.confluencePageId = confluencePageId; }
+
+    public String getLocalMarkdownPath() { return localMarkdownPath; }
+    public void setLocalMarkdownPath(String localMarkdownPath) { this.localMarkdownPath = localMarkdownPath; }
+
+    public String getTestsMarkdownPath() { return testsMarkdownPath; }
+    public void setTestsMarkdownPath(String testsMarkdownPath) { this.testsMarkdownPath = testsMarkdownPath; }
+
+    public String getBeansMarkdownPath() { return beansMarkdownPath; }
+    public void setBeansMarkdownPath(String beansMarkdownPath) { this.beansMarkdownPath = beansMarkdownPath; }
 
     public OffsetDateTime getLastSyncedToConfluence() { return lastSyncedToConfluence; }
     public void setLastSyncedToConfluence(OffsetDateTime t) { this.lastSyncedToConfluence = t; }

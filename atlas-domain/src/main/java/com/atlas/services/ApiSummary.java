@@ -10,11 +10,21 @@ public record ApiSummary(
         String description,
         String source,
         String confluencePageId,
-        String openapiSnapshot) {
+        String openapiSnapshot,
+        String localMarkdownPath) {
 
-    /** Construct without an openapi snapshot — convenience for intake-source rows and pre-V21 callers. */
+    /** Pre-V25 convenience — defaults the local-markdown ref to null. */
+    public ApiSummary(UUID id, String path, String method, String authMethod,
+                      String description, String source, String confluencePageId,
+                      String openapiSnapshot) {
+        this(id, path, method, authMethod, description, source,
+                confluencePageId, openapiSnapshot, null);
+    }
+
+    /** Pre-V21 convenience — defaults snapshot AND local-markdown ref to null. */
     public ApiSummary(UUID id, String path, String method, String authMethod,
                       String description, String source, String confluencePageId) {
-        this(id, path, method, authMethod, description, source, confluencePageId, null);
+        this(id, path, method, authMethod, description, source,
+                confluencePageId, null, null);
     }
 }

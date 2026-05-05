@@ -92,17 +92,41 @@ Goal: extend the Confluence space so a newcomer can drill from the landing page 
 
 **Phase 5.6 is closed.** Verified live in the ATLAS Confluence space: every service page's Section 8 "Internals" block links its L4 module pages, L5 Beans page, Tests page, and L3 endpoint pages. The landing page carries a "How to read this space" preamble.
 
-## Phase 5.7 — Spring Integration drill-down
+## Phase 5.7 — Spring Integration drill-down (PAUSED)
 
-Goal: extend Atlas so it can describe a Spring Integration service at the same granularity Phase 5.6 achieved for vanilla Spring services. The user's organization runs ~12 services on Spring Integration; Phase 5.6's L5 Beans extractor misses the framework's most interesting structure (`IntegrationFlow` DSL chains, `MessageChannel` beans, `@MessagingGateway` interfaces). Without this phase, a stakeholder demo against one of those services renders thin pages. Plan: `docs/plans/2026-04-30-spring-integration-drill-down.md`.
+Goal: extend Atlas so it can describe a Spring Integration service at the same granularity Phase 5.6 achieved for vanilla Spring services. The user's organization runs ~12 services on Spring Integration; Phase 5.6's L5 Beans extractor misses the framework's most interesting structure (`IntegrationFlow` DSL chains, `MessageChannel` beans, `@MessagingGateway` interfaces). Plan: `docs/plans/2026-04-30-spring-integration-drill-down.md`.
+
+**Status: paused 2026-05-05.** Resumes after Phase 5.8 + Phase 5.9 close. The first real target for this phase has been confirmed as a Spring Integration application with the `spring-integration-aws` direct dependency. When 5.7 resumes, scope adds: `spring-integration-aws` adapter handling (`@SqsListener`, `S3StreamingMessageSource`, etc.); migration numbers shift to V26–V29 (V25 taken by 5.8).
 
 - [ ] M0 — Discovery + `RepoSourceFetcher` abstraction (local-filesystem + GitHub-Contents implementations); register target SI service via `file://` URL; scope annotation/DSL mix
-- [ ] M1 — Annotation endpoints + `@MessagingGateway` interfaces (V25 + V26 + extractors + coordinator + REST endpoint)
-- [ ] M2 — `@Bean MessageChannel` definitions + `IntegrationFlow` DSL parser with project-level cross-file channel resolution (V27 + V28)
+- [ ] M1 — Annotation endpoints + `@MessagingGateway` interfaces (V26 + V27 + extractors + coordinator + REST endpoint)
+- [ ] M2 — `@Bean MessageChannel` definitions + `IntegrationFlow` DSL parser with project-level cross-file channel resolution (V28 + V29); AWS adapter coverage
 - [ ] M3 — Per-service Flows page (mermaid graph per flow) + L2 Section 8 "Internals" Flows sub-bullet
-- [ ] M4 — Re-point Atlas at target SI service; granularity validation; demo script update
+- [ ] M4 — Re-point Atlas at the SI ownership-analysis target; granularity validation; ownership-doc readiness check
 
-Closes by phase boundary: a stakeholder can open the target service's Confluence page and walk down to per-channel / per-flow / per-handler detail. Phase 6 stakeholder demo uses this artifact to win buy-in for org-wide rollout to all 12 services.
+Closes by phase boundary: the team can open the target's Markdown vault and walk down to per-channel / per-flow / per-handler detail. Both missions served — the same artifact also lands the Phase 6 demo.
+
+## Phase 5.8 — Local Markdown wiki sink (ACTIVE)
+
+Goal: introduce a `WikiSink` abstraction with a `LocalMarkdownWikiSink` implementation so Atlas can write its renderings to a local directory as Obsidian-compatible Markdown files instead of (or in addition to) syncing to Confluence. **Required prerequisite for the ownership-analysis mission**: confidential work targets must not egress to external Confluence. Plan: `docs/plans/2026-05-05-local-markdown-wiki-sink.md`.
+
+- [ ] M1 — `WikiSink` interface + `ConfluenceWikiSink` refactor (no behavior change; all 317 tests stay green)
+- [ ] M2 — Parallel Markdown renderers (one per existing Confluence renderer; consume the same `*PageContext`; emit GFM with YAML front matter + Obsidian WikiLinks)
+- [ ] M3 — `LocalMarkdownWikiSink` + V25 schema (parallel `local_markdown_path` columns)
+- [ ] M4 — Configuration + dogfood verification (Atlas-against-Atlas Markdown vault, browseable in Obsidian)
+
+Defaults flip: `local-markdown.enabled=true`, `confluence.enabled=false`. Confluence sync becomes opt-in (active decision per instance) rather than the default. Existing Atlas dogfood pointed at Confluence keeps working via per-instance config override.
+
+## Phase 5.9 — Configuration extraction (PLANNED)
+
+Goal: surface application configuration deep enough to answer "what does this service actually run with?" Closes the largest remaining gap for the ownership-analysis mission — services that lean heavily on in-house `@Enable*` annotations or external config sources are otherwise opaque to today's Atlas.
+
+- [ ] M1 — `application.properties` / `application.yml` parsing, including profile-specific overrides (`-dev`, `-prod`, etc.)
+- [ ] M2 — `@Value` / `@ConfigurationProperties` extraction from source
+- [ ] M3 — `@Enable*` annotation surface (which annotations the service uses, what each one declares — minimum: name + javadoc + module of origin)
+- [ ] M4 — Per-service Configuration page; L2 Section 8 "Internals" gains a Configuration sub-bullet
+
+Closes by phase boundary: opening a service's Markdown vault answers "what config knobs exist, what their defaults are, what overrides apply per profile, and which `@Enable*` annotations are turning on what subsystems."
 
 ## Phase 6 — Stakeholder Demo and Handoff
 

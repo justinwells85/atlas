@@ -3,6 +3,7 @@ package com.atlas.confluence;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -24,6 +25,11 @@ import java.util.Optional;
  * Confluence v2 reference: https://developer.atlassian.com/cloud/confluence/rest/v2/
  */
 @Component
+@ConditionalOnProperty(
+        prefix = "atlas.wiki.sinks.confluence",
+        name = "enabled",
+        havingValue = "true",
+        matchIfMissing = true)
 public class ConfluenceClient {
 
     private final RestClient http;
