@@ -51,49 +51,4 @@ public record ServicePageContext(
         String beansPageUrl,
         String testsPageUrl,
         String configurationPageUrl) {
-
-    /**
-     * Legacy 10-arg constructor — kept so pre-Phase-5.6-M4 call sites compile
-     * unchanged. Internals fields default to empty/null, which the renderer
-     * treats as "this layer hasn't been observed yet" (thin-note rendering).
-     */
-    public ServicePageContext(
-            Service service,
-            List<ApiPresentation> apis,
-            List<ServiceDependencyEdge> upstreamServices,
-            List<ServiceDependencyEdge> downstreamServices,
-            List<DatabaseUsage> databases,
-            List<ExternalDependencyUsage> externalDependencies,
-            List<ServiceMetadata> serviceMetadata,
-            List<ChangeEntry> recentChanges,
-            Map<UUID, String> serviceConfluencePageUrls,
-            InventoryPageUrls inventoryPageUrls) {
-        this(service, apis, upstreamServices, downstreamServices, databases, externalDependencies,
-                serviceMetadata, recentChanges, serviceConfluencePageUrls, inventoryPageUrls,
-                List.of(), Map.of(), null, null, null);
-    }
-
-    /**
-     * Phase 5.6 M4 14-arg constructor — kept so pre-Phase-5.9-M4 call sites
-     * compile unchanged. Configuration field defaults to null (thin-note).
-     */
-    public ServicePageContext(
-            Service service,
-            List<ApiPresentation> apis,
-            List<ServiceDependencyEdge> upstreamServices,
-            List<ServiceDependencyEdge> downstreamServices,
-            List<DatabaseUsage> databases,
-            List<ExternalDependencyUsage> externalDependencies,
-            List<ServiceMetadata> serviceMetadata,
-            List<ChangeEntry> recentChanges,
-            Map<UUID, String> serviceConfluencePageUrls,
-            InventoryPageUrls inventoryPageUrls,
-            List<ServiceModule> modules,
-            Map<String, String> modulePageUrlsByPath,
-            String beansPageUrl,
-            String testsPageUrl) {
-        this(service, apis, upstreamServices, downstreamServices, databases, externalDependencies,
-                serviceMetadata, recentChanges, serviceConfluencePageUrls, inventoryPageUrls,
-                modules, modulePageUrlsByPath, beansPageUrl, testsPageUrl, null);
-    }
 }

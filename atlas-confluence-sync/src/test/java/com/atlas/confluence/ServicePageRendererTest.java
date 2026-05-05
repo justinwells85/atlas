@@ -173,7 +173,8 @@ class ServicePageRendererTest {
                 List.of(edge),
                 List.of(), List.of(), List.of(), List.of(), List.of(),
                 Map.of(upstreamId, "https://example.atlassian.net/wiki/spaces/ATLAS/pages/4242"),
-                InventoryPageUrls.empty());
+                InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
 
         String rendered = renderer.render(ctx);
 
@@ -196,7 +197,8 @@ class ServicePageRendererTest {
                 List.of(edge),
                 List.of(), List.of(), List.of(), List.of(), List.of(),
                 Map.of(), // empty — peer page not yet synced
-                InventoryPageUrls.empty());
+                InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
 
         String rendered = renderer.render(ctx);
 
@@ -212,7 +214,8 @@ class ServicePageRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s,
                 List.of(new ApiPresentation(api, List.of(), null)),
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
 
         String rendered = renderer.render(ctx);
 
@@ -231,7 +234,8 @@ class ServicePageRendererTest {
                 s,
                 List.of(new ApiPresentation(api, List.of(),
                         "https://atlas.atlassian.net/wiki/spaces/ATLAS/pages/EP_HEALTH")),
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
 
         String rendered = renderer.render(ctx);
 
@@ -246,7 +250,8 @@ class ServicePageRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s,
                 List.of(new ApiPresentation(api, List.of(), null)),
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
 
         String rendered = renderer.render(ctx);
 
@@ -426,7 +431,7 @@ class ServicePageRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s, List.of(endpointPres), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
-                List.of(modA, modB), moduleUrls, beansUrl, testsUrl);
+                List.of(modA, modB), moduleUrls, beansUrl, testsUrl, null);
 
         String rendered = renderer.render(ctx);
 
@@ -450,7 +455,7 @@ class ServicePageRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s, List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
-                List.of(), Map.of(), beansUrl, testsUrl);
+                List.of(), Map.of(), beansUrl, testsUrl, null);
 
         String rendered = renderer.render(ctx);
 
@@ -467,7 +472,7 @@ class ServicePageRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s, List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
-                List.of(), Map.of(), null, testsUrl);
+                List.of(), Map.of(), null, testsUrl, null);
 
         String rendered = renderer.render(ctx);
 
@@ -532,7 +537,8 @@ class ServicePageRendererTest {
                 List.of(), List.of(), Map.of(), InventoryPageUrls.empty(),
                 List.of(m), moduleUrls,
                 "https://example.atlassian.net/wiki/spaces/ATLAS/pages/BEANS",
-                "https://example.atlassian.net/wiki/spaces/ATLAS/pages/TESTS");
+                "https://example.atlassian.net/wiki/spaces/ATLAS/pages/TESTS",
+                null);
 
         String rendered = renderer.render(ctx);
 
@@ -559,13 +565,15 @@ class ServicePageRendererTest {
     private ServicePageContext contextWith(Service s, List<ServiceMetadata> metadata) {
         return new ServicePageContext(
                 s, List.of(), List.of(), List.of(), List.of(), List.of(), metadata,
-                List.of(), Map.of(), InventoryPageUrls.empty());
+                List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
     }
 
     private ServicePageContext contextWithDeps(Service s, List<ExternalDependencyUsage> deps) {
         return new ServicePageContext(
                 s, List.of(), List.of(), List.of(), List.of(), deps, List.of(),
-                List.of(), Map.of(), InventoryPageUrls.empty());
+                List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
     }
 
 
@@ -618,7 +626,8 @@ class ServicePageRendererTest {
                 List.of(),
                 List.of(change),
                 Map.of(),
-                InventoryPageUrls.empty());
+                InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
     }
 
     private ServicePageContext minimalContext() {
@@ -631,7 +640,8 @@ class ServicePageRendererTest {
     private ServicePageContext emptyContextFor(Service s) {
         return new ServicePageContext(
                 s, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(),
-                InventoryPageUrls.empty());
+                InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
     }
 
     private Service baseService() {

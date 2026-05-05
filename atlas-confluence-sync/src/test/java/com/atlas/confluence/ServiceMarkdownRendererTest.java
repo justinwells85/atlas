@@ -157,7 +157,8 @@ class ServiceMarkdownRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s, List.of(), List.of(edge), List.of(), List.of(), List.of(), List.of(), List.of(),
                 Map.of(upstreamId, "auth-service"),
-                InventoryPageUrls.empty());
+                InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
 
         String rendered = renderer.render(ctx);
 
@@ -173,7 +174,8 @@ class ServiceMarkdownRendererTest {
         ServicePageContext ctx = new ServicePageContext(
                 s, List.of(pres), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 Map.of(),
-                InventoryPageUrls.empty());
+                InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
 
         String rendered = renderer.render(ctx);
 
@@ -196,7 +198,7 @@ class ServiceMarkdownRendererTest {
                 s, List.of(pres), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 Map.of(),
                 InventoryPageUrls.empty(),
-                List.of(modA), moduleRefs, "base — Beans", "base — Tests");
+                List.of(modA), moduleRefs, "base — Beans", "base — Tests", null);
 
         String rendered = renderer.render(ctx);
 
@@ -290,7 +292,8 @@ class ServiceMarkdownRendererTest {
     private ServicePageContext contextWith(Service s, List<ServiceMetadata> metadata) {
         return new ServicePageContext(
                 s, List.of(), List.of(), List.of(), List.of(), List.of(), metadata,
-                List.of(), Map.of(), InventoryPageUrls.empty());
+                List.of(), Map.of(), InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
     }
 
     private ServicePageContext fullContext() {
@@ -343,7 +346,8 @@ class ServiceMarkdownRendererTest {
                 List.of(),
                 List.of(change),
                 Map.of(),
-                InventoryPageUrls.empty());
+                InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
     }
 
     private ServicePageContext minimalContext() {
@@ -353,7 +357,8 @@ class ServiceMarkdownRendererTest {
         return new ServicePageContext(
                 s, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 Map.of(),
-                InventoryPageUrls.empty());
+                InventoryPageUrls.empty(),
+                List.of(), Map.of(), null, null, null);
     }
 
     private Service baseService() {
