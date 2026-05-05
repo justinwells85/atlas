@@ -92,11 +92,13 @@ Goal: extend the Confluence space so a newcomer can drill from the landing page 
 
 **Phase 5.6 is closed.** Verified live in the ATLAS Confluence space: every service page's Section 8 "Internals" block links its L4 module pages, L5 Beans page, Tests page, and L3 endpoint pages. The landing page carries a "How to read this space" preamble.
 
-## Phase 5.7 — Spring Integration drill-down (PAUSED)
+## Phase 5.7 — Spring Integration drill-down (PAUSED, will resume TRIMMED)
 
 Goal: extend Atlas so it can describe a Spring Integration service at the same granularity Phase 5.6 achieved for vanilla Spring services. The user's organization runs ~12 services on Spring Integration; Phase 5.6's L5 Beans extractor misses the framework's most interesting structure (`IntegrationFlow` DSL chains, `MessageChannel` beans, `@MessagingGateway` interfaces). Plan: `docs/plans/2026-04-30-spring-integration-drill-down.md`.
 
-**Status: paused 2026-05-05.** Resumes after Phase 5.8 + Phase 5.9 close. The first real target for this phase has been confirmed as a Spring Integration application with the `spring-integration-aws` direct dependency. When 5.7 resumes, scope adds: `spring-integration-aws` adapter handling (`@SqsListener`, `S3StreamingMessageSource`, etc.); migration numbers shift to V26–V29 (V25 taken by 5.8).
+**Status: paused 2026-05-05.** Resumes **trimmed** after Phase 5.9 closes. The first real target for this phase has been confirmed as a Spring Integration application with the `spring-integration-aws` direct dependency.
+
+**Trim decision (recorded in `docs/plans/2026-05-05-configuration-extraction.md` addendum):** when 5.7 resumes, **M3 is cut** (per-service Flows mermaid graphs). The renderer emits flows as ordered text tables instead of diagrams. M0 / M1 / M2 (RepoSourceFetcher + annotation endpoints + gateways + channel beans + IntegrationFlow DSL parser) all stay — the structural data is the load-bearing piece for ownership analysis. Mermaid visualization is deferred to a possible Phase 6 polish. **Scope additions when resumed**: `spring-integration-aws` adapter handling (`@SqsListener`, `S3StreamingMessageSource`, etc.). **Migration numbers shift to V30–V32** (V25 taken by 5.8; V26-V29 taken by 5.9; one fewer migration than the original plan since M3 is cut).
 
 - [ ] M0 — Discovery + `RepoSourceFetcher` abstraction (local-filesystem + GitHub-Contents implementations); register target SI service via `file://` URL; scope annotation/DSL mix
 - [ ] M1 — Annotation endpoints + `@MessagingGateway` interfaces (V26 + V27 + extractors + coordinator + REST endpoint)

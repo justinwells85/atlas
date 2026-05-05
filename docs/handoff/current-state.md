@@ -1,6 +1,6 @@
 # Atlas — Current State
 
-One-page summary of what is built, what is tested, what is not done, and what is deferred. Last updated: 2026-05-05, **end of Phase 5.8 (closed)** — local Markdown wiki sink shipped, dual-sink dogfood verified live, production defaults now favour confidential-safe local-only. Phase 5.7 (Spring Integration drill-down) paused; Phase 5.9 (configuration extraction) is the next phase.
+One-page summary of what is built, what is tested, what is not done, and what is deferred. Last updated: 2026-05-05, **end of Phase 5.8 (closed) + Phase 5.9 plan approved (M1 not yet started)** — local Markdown wiki sink shipped, dual-sink dogfood verified live, production defaults now favour confidential-safe local-only; configuration-extraction plan approved with the SI ownership-analysis target sequenced as the post-5.7 dogfood. Phase 5.7 (Spring Integration drill-down) paused; Phase 5.9 (configuration extraction) is the active phase; Phase 5.7 will resume **trimmed** (cut M3 mermaid flow graphs) after 5.9 closes.
 
 ## What's built and working
 
@@ -89,6 +89,12 @@ Not all gaps are deferred decisions; some are intentional non-goals at prototype
 ## Closed phase: code-driven documentation (2026-04-29)
 
 `docs/plans/2026-04-29-code-driven-documentation.md` — closed. Seven milestones (M1, M2, M2.5, M3, M3.5, M4, M4.5, M5 + interim phase reflection + end-of-phase reflection). All seven plan-stated success criteria met. The interview is materially shrunk; the dogfood is honest; per-source provenance is uniform across data types; the append-only model and per-source composition extend cleanly to future writers.
+
+## Active phase: configuration extraction (2026-05-05, plan approved)
+
+`docs/plans/2026-05-05-configuration-extraction.md` — plan approved end of session 3 (no code yet). Four milestones: M1 properties/YAML parsing (V26), M2 `@Value` + `@ConfigurationProperties` extraction (V27), M3 `@Enable*` annotation extraction (V28), M4 Configuration page renderers + L2 Section 8 wiring + dual-column persistence (V29) + dogfood. Net add ~60-75 tests. Five open questions in the plan resolved: (1) V26-V29 numbering, (2) Section 8 sub-bullet placement below Tests, (3) Markdown cross-link via Obsidian heading anchors, (4) DD-016 + DD-017 to capture at M1 close (`spring.config.import` chained imports + relaxed-binding aliases), (5) dogfood scope — in-repo for M4, then sequenced into the SI ownership-analysis target after Phase 5.7-trimmed.
+
+The plan also encodes a **5.7 trim** decision: when Phase 5.7 resumes, M3 (per-service Flows mermaid graphs) is cut; the renderer emits flows as ordered text tables instead. The DSL parser + structural extraction stay; visualization is deferred to a possible Phase 6 polish if the demo asks for it. Migration numbers shift accordingly: 5.9 takes V26-V29, 5.7-trimmed takes V30-V32.
 
 ## Closed phase: local Markdown wiki sink (2026-05-05)
 
