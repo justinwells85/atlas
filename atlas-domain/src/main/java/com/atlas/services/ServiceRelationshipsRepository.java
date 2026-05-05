@@ -918,4 +918,73 @@ public class ServiceRelationshipsRepository {
                 rs.getString("downstream_name"),
                 rs.getString("description"));
     }
+
+    // --- service_config_properties (Phase 5.9 M1 — append-only from day one)
+
+    /**
+     * Append one property-key observation. Defaults to {@code presence='present'}
+     * with source {@code 'properties-file'}. Empty {@code value} is allowed
+     * ({@code key=} declarations and null YAML scalars stringify to empty).
+     */
+    public UUID insertConfigProperty(UUID serviceId, String keyPath, String value,
+                                      String sourceFile, String profile) {
+        return insertConfigProperty(serviceId, keyPath, value, sourceFile, profile,
+                "properties-file", "present");
+    }
+
+    public UUID insertConfigProperty(UUID serviceId, String keyPath, String value,
+                                      String sourceFile, String profile,
+                                      String source, String presence) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO service_config_properties " +
+                        "(id, service_id, key_path, value, source_file, profile, source, presence) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                id, serviceId, keyPath,
+                value == null ? "" : value,
+                sourceFile,
+                profile == null ? "default" : profile,
+                source, presence);
+        return id;
+    }
+
+    /**
+     * Append a {@code presence='absent'} tombstone for a property key no
+     * longer present in the source files. The renderer never surfaces
+     * tombstones; the value is bookkeeping-only.
+     */
+    public UUID writeConfigPropertyTombstone(UUID serviceId, String keyPath,
+                                              String sourceFile, String profile,
+                                              String source) {
+        return insertConfigProperty(serviceId, keyPath, "", sourceFile, profile,
+                source, "absent");
+    }
+
+    /**
+     * Live view: latest observation per
+     * {@code (service_id, key_path, profile, source_file)} where
+     * {@code presence='present'}. Used by the Configuration page renderer.
+     */
+    public List<ServiceConfigProperty> findConfigPropertiesFor(UUID serviceId) {
+        return jdbc.query(
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, key_path, value, source_file, profile, source, presence, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, key_path, profile, source_file " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM service_config_properties " +
+                        ") " +
+                        "SELECT id, service_id, key_path, value, source_file, profile, source " +
+                        "FROM latest " +
+                        "WHERE rn = 1 AND presence = 'present' AND service_id = ? " +
+                        "ORDER BY profile, key_path, source_file",
+                (rs, i) -> new ServiceConfigProperty(
+                        (UUID) rs.getObject("id"),
+                        (UUID) rs.getObject("service_id"),
+                        rs.getString("key_path"),
+                        rs.getString("value"),
+                        rs.getString("source_file"),
+                        rs.getString("profile"),
+                        rs.getString("source")),
+                serviceId);
+    }
 }

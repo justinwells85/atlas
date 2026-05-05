@@ -119,11 +119,11 @@ Goal: introduce a `WikiSink` abstraction with a `LocalMarkdownWikiSink` implemen
 
 **Phase 5.8 is closed.** 477 active tests, 0 failures. Production defaults are now confidential-safe (local-markdown only); the public ATLAS Confluence dogfood continues to work via the `confluence-dogfood` Spring profile. Phase 5.9 (configuration extraction) is the next phase; Phase 5.7 (Spring Integration drill-down, paused) resumes after 5.9.
 
-## Phase 5.9 — Configuration extraction (PLANNED)
+## Phase 5.9 — Configuration extraction (ACTIVE — M1 closed)
 
 Goal: surface application configuration deep enough to answer "what does this service actually run with?" Closes the largest remaining gap for the ownership-analysis mission — services that lean heavily on in-house `@Enable*` annotations or external config sources are otherwise opaque to today's Atlas.
 
-- [ ] M1 — `application.properties` / `application.yml` parsing, including profile-specific overrides (`-dev`, `-prod`, etc.)
+- [x] M1 — `application.properties` / `application.yml` parsing, including profile-specific overrides (V26 `service_config_properties` + `PropertiesFileParser` + `refreshConfiguration` coordinator + `POST /api/code-sync/refresh-configuration/{serviceId}`; DD-016 + DD-017 captured)
 - [ ] M2 — `@Value` / `@ConfigurationProperties` extraction from source
 - [ ] M3 — `@Enable*` annotation surface (which annotations the service uses, what each one declares — minimum: name + javadoc + module of origin)
 - [ ] M4 — Per-service Configuration page; L2 Section 8 "Internals" gains a Configuration sub-bullet

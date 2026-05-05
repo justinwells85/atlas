@@ -10,6 +10,43 @@ Newest at top.
 
 ---
 
+## DD-017 — Spring Boot relaxed-binding aliases are not normalised in `service_config_properties`
+
+**Status**: Deferred. *Captured Phase 5.9 M1 — configuration extraction.*
+
+Spring Boot's relaxed-binding rules treat `my.app.url` ≡ `my.app.URL` ≡ `MY_APP_URL` ≡ `my-app-url` ≡ `my_app_url` as the same key when binding to `@ConfigurationProperties` or resolving `@Value("${...}")`. The Phase 5.9 M1 extractor records keys **verbatim** as they appear in the source file — no aliasing, no canonicalisation. Two property files declaring `atlas.feature.flag` and `atlas.feature.FLAG` end up as two separate observation rows, and a `@Value("${atlas.feature.flag}")` injection-site cross-link resolved against the verbatim key will only match one of them.
+
+**Why deferred**: relaxed-binding is a runtime resolution rule, not a source-file rule. Implementing it correctly means encoding Spring Boot's `RelaxedNames` set, which has six canonical forms per key, plus environment-variable conversion (`SPRING_DATASOURCE_URL` ↔ `spring.datasource.url`). At prototype scale, the verbatim-text shape is a more honest representation of "what the file actually says" — surfacing alias collisions as separate rows can itself be useful information for an ownership transition. The cross-link asymmetry only matters for codebases that mix styles, which is uncommon in greenfield Spring Boot.
+
+**Trigger to revisit**: an ownership-target codebase mixes alias styles in a way that materially confuses the rendered Configuration page (e.g. dev properties use kebab-case, prod overrides use environment-variable case, and the cross-link to `@Value` injection-sites silently misses half the matches). The Phase 5.7 SI ownership-analysis target is a candidate — it inherits in-house `@Enable*` annotations whose internal property keys may not follow a single convention.
+
+**Remediation sketch**:
+
+1. Add a `canonicalKey(String)` helper in `PropertiesFileParser` that lowercases, replaces `_`/`-` with `.`, and strips bracket suffixes for indexed lists. Keep the verbatim key on the row; add a derived `canonical_key` column for joins.
+2. Update the M2 cross-link join (renderer-side, in `ConfigurationPageContext`) to compare canonical keys instead of raw strings.
+3. Bonus: if two distinct verbatim keys canonicalise to the same value, surface them on the Configuration page as a "key alias collision" annotation — concrete value to the ownership reader.
+
+---
+
+## DD-016 — `spring.config.import` chained imports are not followed
+
+**Status**: Deferred. *Captured Phase 5.9 M1 — configuration extraction.*
+
+A Spring Boot configuration file can declare `spring.config.import=optional:file:./extra.properties` (or `classpath:`, `vault:`, `configtree:`, etc.) to chain in additional configuration sources. The Phase 5.9 M1 extractor walks `application*.{properties,yml,yaml}` only — chained imports are recorded as a property key like any other, not followed and re-parsed. A service whose `application.properties` declares `spring.config.import=classpath:db.properties` will surface the import declaration but none of `db.properties`'s keys.
+
+**Why deferred**: each `spring.config.import` URI scheme has its own resolver shape (filesystem traversal for `file:`, classpath lookup for `classpath:`, external services like Vault / Consul / Kubernetes ConfigMaps for the rest). Implementing them all is a non-trivial scope add for prototype scale, and a cycle-detection pass to handle `a.properties → b.properties → a.properties` adds further complexity. The single-pass walk covers the common case where everything lives in `src/main/resources/application*.{properties,yml,yaml}`.
+
+**Trigger to revisit**: an ownership-target codebase that uses `spring.config.import` for a non-trivial fraction of its keys (rather than incidentally), such that the Configuration page rendered against the verbatim files is materially incomplete. The Phase 5.7 SI ownership-analysis target is a candidate — in-house `@Enable*` annotations may pull configuration from internal property sources that aren't in the repo's `src/main/resources`.
+
+**Remediation sketch**:
+
+1. Decide which schemes are in scope. `file:` and `classpath:` are tractable from a `RepoFileFetcher` walk; `vault:` / `configtree:` etc. require live infrastructure and stay deferred.
+2. Implement a recursive resolver in the coordinator (not the parser — the parser stays single-file). Walk `spring.config.import` declarations, fetch each referenced file via `RepoFileFetcher.fetchFile`, parse, recurse. Track visited paths to detect cycles.
+3. Each chained-source key gets `source_file` set to the *imported* filename (so the cross-link to the import declaration is recoverable on the rendered page).
+4. Add tests for: simple `classpath:` import, `file:` relative import, optional-vs-required `optional:` prefix handling, cycle detection, missing-file tolerance.
+
+---
+
 ## DD-013 — Confluence orphan-page cleanup when a service is deleted from the DB — RESOLVED
 
 **Status**: Resolved (Phase 4.5 follow-up). *Carved out of DD-011 during the Phase 4.5 layout work; closed by ADR-014.*

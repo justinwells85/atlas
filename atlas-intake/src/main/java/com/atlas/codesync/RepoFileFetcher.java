@@ -45,6 +45,36 @@ public class RepoFileFetcher {
     }
 
     /**
+     * List every regular file directly inside {@code relativePath} (no
+     * recursion). Used by Phase 5.9 M1 to fetch
+     * {@code src/main/resources/application*.{properties,yml,yaml}} without
+     * descending into subdirectories. Returns an empty list if the directory
+     * does not exist.
+     */
+    public List<RepoFile> listFilesIn(String owner, String repo, String relativePath) {
+        List<RepoFile> out = new ArrayList<>();
+        String uri = "/repos/" + owner + "/" + repo + "/contents/" + relativePath;
+        List<Map<String, Object>> entries;
+        try {
+            entries = http.get()
+                    .uri(uri)
+                    .retrieve()
+                    .body(LIST_OF_MAP);
+        } catch (HttpClientErrorException.NotFound e) {
+            return out;
+        }
+        if (entries == null) return out;
+        for (Map<String, Object> entry : entries) {
+            String type = asString(entry.get("type"));
+            String entryPath = asString(entry.get("path"));
+            if ("file".equals(type) && entryPath != null) {
+                out.add(loadFile(entry, entryPath));
+            }
+        }
+        return out;
+    }
+
+    /**
      * Fetch one specific file from the repo. Returns empty if the file
      * doesn't exist (404). Used by M4's pom.xml ingestion — same Contents
      * API endpoint as the directory walk, but the response shape is a

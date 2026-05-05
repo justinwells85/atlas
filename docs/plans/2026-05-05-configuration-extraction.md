@@ -112,6 +112,34 @@ Per-milestone test counts above are estimates; the floor is "every observable be
 4. **`spring.config.import` and relaxed binding** — capturing as **DD-016** + **DD-017** in `deferred-decisions.md` as part of M1 close. Confirm this is the right call for prototype scale.
 5. **Dogfood scope — RESOLVED.** Atlas's three modules have minimal config surfaces, sufficient to prove the renderer but not to exercise it under realistic load. Resolution: M4 closes against the in-repo dogfood as planned. The richer real-target dogfood is the **SI ownership-analysis target** (a confidential Spring Integration application with `spring-integration-aws` direct dependency), which still requires Phase 5.7 work to render its core structure (flows / channels / gateways / annotation-driven endpoints) before the configuration page is meaningful in context. Sequencing: this phase (5.9) → Phase 5.7-trimmed (see addendum) → re-point Atlas at the SI target as the combined dogfood for both phases. Atlas is then ownership-grade for the SI target.
 
+## Reflections
+
+### M1 reflection (2026-05-05, session 4)
+
+**What's working**
+
+- The V22/V23 precedent (append-only-from-day-one with `observed_at` + `presence` + window-function live view) carried over to V26 with zero design friction. Sanity-checking against `service_modules` first paid off: the schema matched precedent and the live-view query is a copy of the bean / module pattern with the partition key swapped to `(service_id, key_path, profile, source_file)`.
+- `PropertiesFileParser` is a pure function (no Spring beans, no I/O). Test count came in higher than estimated — 15 parser tests covering properties + YAML + multi-doc + nested-flatten + profile-suffix + null-scalars + unrecognised-filename + empty-content. The behaviour-focused style ("when content has comments, then they are ignored", not "test parseProperties") read as specifications immediately.
+- Adding a non-recursive `RepoFileFetcher.listFilesIn` (rather than extending `listJavaSourcesUnder` with a filter) kept both methods single-purpose. Spring Boot resolves `application.properties` from the classpath root, not from subdirectories, so non-recursive matches the runtime semantics.
+- Reusing the existing coordinator pattern (`refreshTests` / `refreshBeans` shape: live-view diff → insert-on-new → tombstone-on-disappeared → audit row when changed) made the implementation mechanical. The `ParsedConfigEntry` private record decouples the parser's output from the coordinator's diff-key logic without leaking either across the boundary.
+
+**What's not / friction**
+
+- The plan said "JPA entity" but the project actually uses immutable record + JdbcTemplate-based `ServiceRelationshipsRepository`. Same-shape precedent caught it during design. Worth fixing the plan-doc terminology before M2 starts ("immutable record + JDBC repository", not "JPA entity").
+- The plan estimate was 12-15 tests for M1; actual is 29 (15 parser + 9 coordinator + 5 domain repo). The +5 domain-repo tests weren't in the plan but follow the existing precedent set by V22/V23 in `ServiceRelationshipsRepositoryTest`. Worth carrying forward: M2 / M3 / M4 estimates should each add ~5 domain-repo tests for the new tables.
+- A separate `CodeSyncControllerTest` was in the plan but does not exist for any of the existing five refresh endpoints. The thin pass-through controllers are tested indirectly through the `@SpringBootTest` coordinator suite. Skipped here to match precedent — if M4 adds Configuration-page-specific REST endpoints (it shouldn't), revisit.
+- DD-016 (`spring.config.import`) and DD-017 (relaxed-binding) captured at M1 close as planned. Both are real gaps for the SI ownership-analysis target: in-house `@Enable*` annotations and internal property conventions are likely to surface them. Carrying these into Phase 5.7-trimmed dogfood as "what we'll know is wrong before the demo."
+
+**Resumable summary**
+
+Branch `main`, commit pending (M1.5). Test counts: project total 506 (was 477 — net +29: atlas-domain 49→54, atlas-intake 117→141, atlas-mcp 24, atlas-confluence-sync 287). New artifacts: `V26__service_config_properties_table.sql`; `ServiceConfigProperty` record + insert/tombstone/find-current methods on `ServiceRelationshipsRepository`; `PropertyEntry` record + `PropertiesFileParser` (regex-routed, java.util.Properties for `.properties`, SnakeYAML SafeConstructor for `.yml`/`.yaml`); `RepoFileFetcher.listFilesIn` (non-recursive); `CodeSyncCoordinator.refreshConfiguration` + audit `code-sync-configuration`; `POST /api/code-sync/refresh-configuration/{serviceId}` REST endpoint. DD-016 + DD-017 added at top of `deferred-decisions.md`.
+
+**M1 success criteria**: ✅ criterion 1 (properties + profile-specific YAML capture), ✅ criterion 8 partial (append-only with presence for properties), ✅ criterion 9 (MariaDB portable — V26 uses the same idioms as V22/V23 which already pass `MariaDBPortabilitySmokeTest`). M2 picks up criteria 2 + 3 (`@Value` + `@ConfigurationProperties`).
+
+**Next**: M2 — `@Value` + `@ConfigurationProperties` extraction (V27 + JavaConfigurationExtractor + extend `refreshConfiguration` to also walk source tree). Estimate revised: 20-25 tests (was 15-20; carry the +5 domain-repo precedent).
+
+---
+
 ## Sequencing addendum — Phase 5.7 trim (decided 2026-05-05)
 
 The original Phase 5.7 plan has four milestones (M0 discovery + RepoSourceFetcher; M1 annotation endpoints + gateways; M2 channel beans + IntegrationFlow DSL parser; M3 per-service Flows page with mermaid graphs; M4 SI-target dogfood). When 5.7 resumes after 5.9 closes, **M3 will be cut** and the renderer will emit flows as ordered text tables instead of mermaid graphs. Rationale:

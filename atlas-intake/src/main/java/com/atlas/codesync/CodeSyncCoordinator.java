@@ -3,6 +3,7 @@ package com.atlas.codesync;
 import com.atlas.services.ApiSummary;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceBean;
+import com.atlas.services.ServiceConfigProperty;
 import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceModule;
 import com.atlas.services.ServiceRelationshipsRepository;
@@ -51,6 +52,8 @@ public class CodeSyncCoordinator {
     private static final String STALE_INTAKE_CHANGED_BY = "code-sync-stale-intake-cleanup";
     private static final String BEANS_SOURCE = "source-tree";
     private static final String BEANS_CHANGED_BY = "code-sync-beans";
+    private static final String CONFIG_SOURCE = "properties-file";
+    private static final String CONFIG_CHANGED_BY = "code-sync-configuration";
 
     private final ServiceRepository services;
     private final ServiceRelationshipsRepository relationships;
@@ -60,6 +63,7 @@ public class CodeSyncCoordinator {
     private final JavaTestExtractor testExtractor;
     private final JavaBeanExtractor beanExtractor;
     private final PomParser pomParser;
+    private final PropertiesFileParser propertiesParser;
     private final String orgGroupPrefix;
 
     public CodeSyncCoordinator(ServiceRepository services,
@@ -70,6 +74,7 @@ public class CodeSyncCoordinator {
                                JavaTestExtractor testExtractor,
                                JavaBeanExtractor beanExtractor,
                                PomParser pomParser,
+                               PropertiesFileParser propertiesParser,
                                @Value("${atlas.code-sync.org-group-prefix:com.atlas}") String orgGroupPrefix) {
         this.services = services;
         this.relationships = relationships;
@@ -79,6 +84,7 @@ public class CodeSyncCoordinator {
         this.testExtractor = testExtractor;
         this.beanExtractor = beanExtractor;
         this.pomParser = pomParser;
+        this.propertiesParser = propertiesParser;
         this.orgGroupPrefix = orgGroupPrefix;
     }
 
@@ -546,6 +552,102 @@ public class CodeSyncCoordinator {
         String trimmed = module.endsWith("/") ? module.substring(0, module.length() - 1) : module;
         return trimmed + "/pom.xml";
     }
+
+    /**
+     * Refresh the property-key observations for one service from the
+     * Spring Boot configuration files in its repo (Phase 5.9 M1). Walks
+     * {@code {module_path}/src/main/resources/} non-recursively, parses every
+     * {@code application*.{properties,yml,yaml}} file via
+     * {@link PropertiesFileParser}, and upserts {@code service_config_properties}
+     * rows tagged {@code source='properties-file'}. Append-only — disappeared
+     * keys are tombstoned.
+     *
+     * <p>Atomic: fetch + parse complete before any DB mutation; the mutation
+     * is wrapped in a transaction so a partial failure rolls back.
+     *
+     * <p>Limits documented at the plan level (DD-016 / DD-017):
+     * {@code spring.config.import} chained imports are not followed; relaxed
+     * binding aliases are not normalised.
+     *
+     * @return counts of inserted (created) and tombstoned (deleted) writes.
+     */
+    @Transactional
+    public CodeSyncResult refreshConfiguration(UUID serviceId) {
+        Service service = services.findById(serviceId)
+                .orElseThrow(() -> new IllegalArgumentException("No such service: " + serviceId));
+
+        String repoUrl = service.getRepoUrl();
+        if (repoUrl == null || repoUrl.isBlank()) {
+            return CodeSyncResult.empty();
+        }
+        RepoFileFetcher.GitHubRepoCoords coords = RepoFileFetcher.parseGitHubUrl(repoUrl);
+        String resourcesPath = resourcesPathFor(service);
+
+        // Fetch + parse first; only mutate the DB on success.
+        List<RepoFile> files = repoFetcher.listFilesIn(coords.owner(), coords.repo(), resourcesPath);
+        List<ParsedConfigEntry> fresh = new ArrayList<>();
+        for (RepoFile f : files) {
+            String filename = filenameOf(f.path());
+            for (PropertyEntry entry : propertiesParser.parse(f.content(), filename)) {
+                fresh.add(new ParsedConfigEntry(
+                        entry.keyPath(), entry.value(), entry.profile(), filename));
+            }
+        }
+
+        // Live view: latest observation per (key_path, profile, source_file)
+        // where presence='present'. Append-only diff vs `fresh`.
+        Map<String, ServiceConfigProperty> live = new HashMap<>();
+        for (ServiceConfigProperty p : relationships.findConfigPropertiesFor(serviceId)) {
+            if (CONFIG_SOURCE.equals(p.source())) {
+                live.put(configKey(p.keyPath(), p.profile(), p.sourceFile()), p);
+            }
+        }
+
+        int created = 0;
+        for (ParsedConfigEntry e : fresh) {
+            String k = configKey(e.keyPath(), e.profile(), e.sourceFile());
+            ServiceConfigProperty current = live.remove(k);
+            if (current == null) {
+                relationships.insertConfigProperty(serviceId, e.keyPath(), e.value(),
+                        e.sourceFile(), e.profile());
+                created++;
+            } else if (!equalsNullable(current.value(), e.value())) {
+                relationships.insertConfigProperty(serviceId, e.keyPath(), e.value(),
+                        e.sourceFile(), e.profile());
+                created++;
+            }
+        }
+        int deleted = live.size();
+        for (ServiceConfigProperty stale : live.values()) {
+            relationships.writeConfigPropertyTombstone(serviceId,
+                    stale.keyPath(), stale.sourceFile(), stale.profile(), CONFIG_SOURCE);
+        }
+
+        if (created + deleted > 0) {
+            relationships.insertServiceChange(serviceId, CONFIG_CHANGED_BY, "updated",
+                    "Configuration refresh: created=" + created + " deleted=" + deleted);
+        }
+        return new CodeSyncResult(created, 0, deleted, 0);
+    }
+
+    private static String resourcesPathFor(Service service) {
+        String module = service.getModulePath();
+        if (module == null || module.isBlank()) return "src/main/resources";
+        String trimmed = module.endsWith("/") ? module.substring(0, module.length() - 1) : module;
+        return trimmed + "/src/main/resources";
+    }
+
+    private static String filenameOf(String repoPath) {
+        if (repoPath == null) return "";
+        int slash = repoPath.lastIndexOf('/');
+        return slash < 0 ? repoPath : repoPath.substring(slash + 1);
+    }
+
+    private static String configKey(String keyPath, String profile, String sourceFile) {
+        return keyPath + "|" + profile + "|" + sourceFile;
+    }
+
+    private record ParsedConfigEntry(String keyPath, String value, String profile, String sourceFile) {}
 
     private static Map<String, String> freshMetadataFromFacts(PomFacts facts) {
         Map<String, String> out = new LinkedHashMap<>();

@@ -2,6 +2,7 @@ package com.atlas.codesync;
 
 import com.atlas.services.ApiSummary;
 import com.atlas.services.Service;
+import com.atlas.services.ServiceConfigProperty;
 import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
@@ -81,6 +82,7 @@ class CodeSyncCoordinatorTest {
         jdbc.update("DELETE FROM service_metadata");
         jdbc.update("DELETE FROM service_external_deps");
         jdbc.update("DELETE FROM external_dependencies");
+        jdbc.update("DELETE FROM service_config_properties");
         jdbc.update("DELETE FROM service_changes");
         jdbc.update("DELETE FROM services");
         wireMock.resetAll();
@@ -952,6 +954,181 @@ class CodeSyncCoordinatorTest {
         CodeSyncResult result = coordinator.refreshBeans(s.getId());
 
         assertThat(result).isEqualTo(CodeSyncResult.empty());
+    }
+
+    // ---- refreshConfiguration (Phase 5.9 M1) ---------------------------
+
+    @Test
+    void whenServiceHasNoRepoUrl_thenRefreshConfigurationIsNoop() {
+        Service s = saveServiceWithRepo("no-repo-cfg-svc", null, null);
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+        assertThat(relationships.findConfigPropertiesFor(s.getId())).isEmpty();
+    }
+
+    @Test
+    void whenRepoHasPropertiesAndYamlFiles_thenAllKeysAreInsertedWithSourcePropertiesFile() {
+        Service s = saveServiceWithRepo("cfg-svc", "https://github.com/o/r", null);
+        stubGithubListing("/repos/o/r/contents/src/main/resources", """
+                [
+                  {"type":"file","name":"application.properties","path":"src/main/resources/application.properties",
+                   "encoding":"base64","content":"%s"},
+                  {"type":"file","name":"application-prod.yml","path":"src/main/resources/application-prod.yml",
+                   "encoding":"base64","content":"%s"}
+                ]
+                """.formatted(
+                b64("spring.application.name=atlas\natlas.port=8080\n"),
+                b64("atlas:\n  api:\n    url: http://prod\n")));
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isEqualTo(3);
+        assertThat(result.deleted()).isZero();
+
+        List<ServiceConfigProperty> rows = relationships.findConfigPropertiesFor(s.getId());
+        assertThat(rows).extracting(ServiceConfigProperty::keyPath, ServiceConfigProperty::profile,
+                        ServiceConfigProperty::sourceFile, ServiceConfigProperty::value)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.api.Assertions.tuple(
+                                "spring.application.name", "default", "application.properties", "atlas"),
+                        org.assertj.core.api.Assertions.tuple(
+                                "atlas.port", "default", "application.properties", "8080"),
+                        org.assertj.core.api.Assertions.tuple(
+                                "atlas.api.url", "prod", "application-prod.yml", "http://prod"));
+        assertThat(rows).extracting(ServiceConfigProperty::source).containsOnly("properties-file");
+    }
+
+    @Test
+    void whenRepoHasModulePath_thenFetcherWalksUnderThatModuleResources() {
+        Service s = saveServiceWithRepo("modular-cfg-svc", "https://github.com/o/r", "atlas-intake");
+        stubGithubListing("/repos/o/r/contents/atlas-intake/src/main/resources", """
+                [{"type":"file","name":"application.properties","path":"atlas-intake/src/main/resources/application.properties",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("atlas.port=8080\n")));
+
+        coordinator.refreshConfiguration(s.getId());
+
+        assertThat(relationships.findConfigPropertiesFor(s.getId()))
+                .extracting(ServiceConfigProperty::keyPath).containsExactly("atlas.port");
+    }
+
+    @Test
+    void whenPropertyValueChanges_thenNewObservationSupersedesPrevious() {
+        Service s = saveServiceWithRepo("evolve-cfg-svc", "https://github.com/o/r", null);
+        String firstBody = """
+                [{"type":"file","name":"application.properties","path":"src/main/resources/application.properties",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("atlas.feature.flag=false\n"));
+        stubGithubListing("/repos/o/r/contents/src/main/resources", firstBody);
+        coordinator.refreshConfiguration(s.getId());
+
+        wireMock.resetAll();
+        String secondBody = """
+                [{"type":"file","name":"application.properties","path":"src/main/resources/application.properties",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("atlas.feature.flag=true\n"));
+        stubGithubListing("/repos/o/r/contents/src/main/resources", secondBody);
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isEqualTo(1);
+        assertThat(result.deleted()).isZero();
+        List<ServiceConfigProperty> rows = relationships.findConfigPropertiesFor(s.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).value()).isEqualTo("true");
+    }
+
+    @Test
+    void whenPropertyDisappearsFromFile_thenItIsTombstoned() {
+        Service s = saveServiceWithRepo("trim-cfg-svc", "https://github.com/o/r", null);
+        String firstBody = """
+                [{"type":"file","name":"application.properties","path":"src/main/resources/application.properties",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("atlas.kept=keep\natlas.removed=bye\n"));
+        stubGithubListing("/repos/o/r/contents/src/main/resources", firstBody);
+        coordinator.refreshConfiguration(s.getId());
+
+        wireMock.resetAll();
+        String secondBody = """
+                [{"type":"file","name":"application.properties","path":"src/main/resources/application.properties",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("atlas.kept=keep\n"));
+        stubGithubListing("/repos/o/r/contents/src/main/resources", secondBody);
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isZero();
+        assertThat(result.deleted()).isEqualTo(1);
+        assertThat(relationships.findConfigPropertiesFor(s.getId()))
+                .extracting(ServiceConfigProperty::keyPath).containsExactly("atlas.kept");
+    }
+
+    @Test
+    void whenSecondRefreshHasIdenticalContent_thenItIsIdempotent() {
+        Service s = saveServiceWithRepo("idem-cfg-svc", "https://github.com/o/r", null);
+        String body = """
+                [{"type":"file","name":"application.properties","path":"src/main/resources/application.properties",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("atlas.port=8080\n"));
+        stubGithubListing("/repos/o/r/contents/src/main/resources", body);
+        coordinator.refreshConfiguration(s.getId());
+
+        wireMock.resetAll();
+        stubGithubListing("/repos/o/r/contents/src/main/resources", body);
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+    }
+
+    @Test
+    void whenResourcesDirectoryDoesNotExist_thenNoMutationAndAuditCountIsZero() {
+        Service s = saveServiceWithRepo("missing-cfg-svc", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
+        assertThat(relationships.findConfigPropertiesFor(s.getId())).isEmpty();
+        assertAuditCount(s.getId(), 0);
+    }
+
+    @Test
+    void whenNonConfigFilesAreInResources_thenTheyAreSkipped() {
+        Service s = saveServiceWithRepo("mixed-cfg-svc", "https://github.com/o/r", null);
+        stubGithubListing("/repos/o/r/contents/src/main/resources", """
+                [
+                  {"type":"file","name":"application.properties","path":"src/main/resources/application.properties",
+                   "encoding":"base64","content":"%s"},
+                  {"type":"file","name":"logback.xml","path":"src/main/resources/logback.xml",
+                   "encoding":"base64","content":"%s"},
+                  {"type":"file","name":"banner.txt","path":"src/main/resources/banner.txt",
+                   "encoding":"base64","content":"%s"}
+                ]
+                """.formatted(
+                b64("atlas.port=8080\n"),
+                b64("<configuration></configuration>"),
+                b64("ATLAS")));
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isEqualTo(1);
+        assertThat(relationships.findConfigPropertiesFor(s.getId()))
+                .extracting(ServiceConfigProperty::keyPath).containsExactly("atlas.port");
+    }
+
+    @Test
+    void whenConfigurationRefreshChangesContent_thenAuditRowRecordsCodeSyncConfiguration() {
+        Service s = saveServiceWithRepo("audit-cfg-svc", "https://github.com/o/r", null);
+        stubGithubListing("/repos/o/r/contents/src/main/resources", """
+                [{"type":"file","name":"application.properties","path":"src/main/resources/application.properties",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("atlas.port=8080\n")));
+
+        coordinator.refreshConfiguration(s.getId());
+
+        assertAuditCount(s.getId(), 1);
+        assertLastAuditChangedBy(s.getId(), "code-sync-configuration");
     }
 
     private void stubGithubFile(String path, String content) {

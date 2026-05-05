@@ -354,6 +354,81 @@ class ServiceRelationshipsRepositoryTest {
         assertThat(afterClear.confluencePageId()).isNull();
     }
 
+    // ---- service_config_properties (Phase 5.9 M1) ------------------------
+
+    @Test
+    void whenConfigPropertyIsInserted_thenLiveViewReturnsItWithKeyValueProfileAndSource() {
+        Service svc = save("config-svc", "team");
+
+        relationships.insertConfigProperty(svc.getId(),
+                "spring.datasource.url",
+                "jdbc:postgresql://localhost/atlas",
+                "application.properties",
+                "default");
+
+        java.util.List<ServiceConfigProperty> rows = relationships.findConfigPropertiesFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        ServiceConfigProperty p = rows.get(0);
+        assertThat(p.keyPath()).isEqualTo("spring.datasource.url");
+        assertThat(p.value()).isEqualTo("jdbc:postgresql://localhost/atlas");
+        assertThat(p.sourceFile()).isEqualTo("application.properties");
+        assertThat(p.profile()).isEqualTo("default");
+        assertThat(p.source()).isEqualTo("properties-file");
+    }
+
+    @Test
+    void whenConfigPropertyHasMultipleObservations_thenLiveViewReturnsLatest() {
+        Service svc = save("config-evolve", "team");
+
+        relationships.insertConfigProperty(svc.getId(),
+                "atlas.feature.flag", "false", "application.properties", "default");
+        relationships.insertConfigProperty(svc.getId(),
+                "atlas.feature.flag", "true", "application.properties", "default");
+
+        java.util.List<ServiceConfigProperty> rows = relationships.findConfigPropertiesFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).value()).isEqualTo("true");
+    }
+
+    @Test
+    void whenConfigPropertyIsTombstoned_thenLiveViewExcludesIt() {
+        Service svc = save("config-tombstone", "team");
+
+        relationships.insertConfigProperty(svc.getId(),
+                "atlas.removed.key", "v", "application.properties", "default");
+        relationships.writeConfigPropertyTombstone(svc.getId(),
+                "atlas.removed.key", "application.properties", "default", "properties-file");
+
+        assertThat(relationships.findConfigPropertiesFor(svc.getId())).isEmpty();
+    }
+
+    @Test
+    void whenSameKeyExistsAcrossProfiles_thenLiveViewReturnsBothObservations() {
+        Service svc = save("config-profiles", "team");
+
+        relationships.insertConfigProperty(svc.getId(),
+                "atlas.api.url", "http://default", "application.properties", "default");
+        relationships.insertConfigProperty(svc.getId(),
+                "atlas.api.url", "http://prod", "application-prod.properties", "prod");
+
+        java.util.List<ServiceConfigProperty> rows = relationships.findConfigPropertiesFor(svc.getId());
+        assertThat(rows).hasSize(2);
+        assertThat(rows).extracting(ServiceConfigProperty::profile)
+                .containsExactlyInAnyOrder("default", "prod");
+    }
+
+    @Test
+    void whenConfigPropertyValueIsEmpty_thenItIsStoredAndReturnedAsEmptyString() {
+        Service svc = save("config-empty", "team");
+
+        relationships.insertConfigProperty(svc.getId(),
+                "atlas.empty.key", "", "application.properties", "default");
+
+        java.util.List<ServiceConfigProperty> rows = relationships.findConfigPropertiesFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).value()).isEmpty();
+    }
+
     private Service save(String name, String ownerTeam) {
         Service s = new Service();
         s.setName(name);

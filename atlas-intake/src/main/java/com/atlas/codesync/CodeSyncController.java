@@ -46,6 +46,13 @@ public class CodeSyncController {
         return coordinator.refreshBeans(serviceId);
     }
 
+    @PostMapping("/refresh-configuration/{serviceId}")
+    @Operation(summary = "Re-derive property-key observations for one service",
+            description = "Walks {module_path}/src/main/resources/ in the GitHub repo named on services.repo_url, parses every application*.{properties,yml,yaml} file (including profile-specific overrides), and upserts service_config_properties rows tagged source='properties-file' (transactional, idempotent). Append-only — disappeared keys are tombstoned. Phase 5.9 M1.")
+    public CodeSyncResult refreshConfiguration(@PathVariable UUID serviceId) {
+        return coordinator.refreshConfiguration(serviceId);
+    }
+
     @PostMapping("/tombstone-stale-intake-apis/{serviceId}")
     @Operation(summary = "Tombstone intake-source apis rows whose endpoints have no openapi counterpart",
             description = "Opt-in cleanup: appends presence='absent' tombstones (preserving source='intake') for intake-source api observations on this service whose (method, path) does not match any current openapi-source live observation. Audit row writes changed_by='code-sync-stale-intake-cleanup'. Not auto-fired during /refresh — call explicitly when truth-fix is wanted.")
