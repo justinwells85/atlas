@@ -106,16 +106,16 @@ Goal: extend Atlas so it can describe a Spring Integration service at the same g
 
 Closes by phase boundary: the team can open the target's Markdown vault and walk down to per-channel / per-flow / per-handler detail. Both missions served — the same artifact also lands the Phase 6 demo.
 
-## Phase 5.8 — Local Markdown wiki sink (ACTIVE)
+## Phase 5.8 — Local Markdown wiki sink (CLOSED 2026-05-05)
 
 Goal: introduce a `WikiSink` abstraction with a `LocalMarkdownWikiSink` implementation so Atlas can write its renderings to a local directory as Obsidian-compatible Markdown files instead of (or in addition to) syncing to Confluence. **Required prerequisite for the ownership-analysis mission**: confidential work targets must not egress to external Confluence. Plan: `docs/plans/2026-05-05-local-markdown-wiki-sink.md`.
 
-- [ ] M1 — `WikiSink` interface + `ConfluenceWikiSink` refactor (no behavior change; all 317 tests stay green)
-- [ ] M2 — Parallel Markdown renderers (one per existing Confluence renderer; consume the same `*PageContext`; emit GFM with YAML front matter + Obsidian WikiLinks)
-- [ ] M3 — `LocalMarkdownWikiSink` + V25 schema (parallel `local_markdown_path` columns)
-- [ ] M4 — Configuration + dogfood verification (Atlas-against-Atlas Markdown vault, browseable in Obsidian)
+- [x] M1 — `WikiSink` interface + `ConfluenceWikiSink` refactor (no behavior change)
+- [x] M2 — Parallel Markdown renderers (10 of them; consume same `*PageContext`; emit GFM with YAML front matter + Obsidian WikiLinks)
+- [x] M3 — `LocalMarkdownWikiSink` + V25 schema (parallel `local_markdown_path` columns) + per-sink `SyncCoordinator` rewrite
+- [x] M4 — Defaults flipped (`local-markdown.enabled=true`, `confluence.enabled=false`); `confluence-dogfood` profile re-enables both sinks for the existing public Atlas instance; dogfood verified live
 
-Defaults flip: `local-markdown.enabled=true`, `confluence.enabled=false`. Confluence sync becomes opt-in (active decision per instance) rather than the default. Existing Atlas dogfood pointed at Confluence keeps working via per-instance config override.
+**Phase 5.8 is closed.** 477 active tests, 0 failures. Production defaults are now confidential-safe (local-markdown only); the public ATLAS Confluence dogfood continues to work via the `confluence-dogfood` Spring profile. Phase 5.9 (configuration extraction) is the next phase; Phase 5.7 (Spring Integration drill-down, paused) resumes after 5.9.
 
 ## Phase 5.9 — Configuration extraction (PLANNED)
 

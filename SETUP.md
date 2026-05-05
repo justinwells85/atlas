@@ -105,6 +105,55 @@ This launches Claude Code in plan-first mode, aligns it with the roadmap, and le
 - Use `/memory` in the session to inspect what Claude Code has auto-remembered.
 - Use `#` followed by a rule mid-session to add to memory (e.g., `# Always run mvn test after code changes`).
 
+## Wiki Sinks (Phase 5.8 M4 onward)
+
+Atlas renders service documentation through a `WikiSink` abstraction with two implementations: **local Markdown** (Obsidian-browseable vault) and **Confluence Cloud** (the original dogfood target). Each sink is independently toggled, so an instance can run one, the other, or both.
+
+### Two-instance pattern
+
+Atlas is built to run as two parallel instances on different machines or different working copies:
+
+| Instance | Purpose | Default sink | Confluence sink |
+|----------|---------|--------------|-----------------|
+| Confidential local-only | Ownership analysis of confidential targets | local-markdown ON | OFF (egress forbidden) |
+| Public dogfood | Atlas-on-Atlas, exercised against the public ATLAS Confluence space | local-markdown ON | ON (`confluence-dogfood` profile) |
+
+The default configuration (no profile) is the **confidential local-only** mode: only the local-markdown sink runs, and the Confluence sink stays inert even if API credentials happen to be in the environment. This is the safe default for any clone of the repo placed near work-confidential source.
+
+### Required configuration
+
+When local-markdown is enabled (the default), one property is mandatory:
+
+```bash
+export ATLAS_WIKI_LOCAL_MARKDOWN_PATH=/absolute/path/to/your/vault
+```
+
+The local-markdown sink fails at startup with `IllegalStateException` if this is unset. Pick any directory; the sink will create files inside it. To browse with Obsidian, open that directory as a vault.
+
+### Running the public dogfood instance
+
+```bash
+export ATLAS_CONFLUENCE_EMAIL='you@example.com'
+export ATLAS_CONFLUENCE_API_TOKEN='...'
+export ATLAS_WIKI_LOCAL_MARKDOWN_PATH="$HOME/atlas-vault"   # or your preferred vault dir
+
+cd atlas-confluence-sync
+mvn spring-boot:run -Dspring-boot.run.profiles=confluence-dogfood
+```
+
+This activates the `confluence-dogfood` Spring profile (`application-confluence-dogfood.properties`), which re-enables the Confluence sink alongside local-markdown. Both sinks fan out per page on every sync.
+
+### Running a confidential local-only instance
+
+```bash
+export ATLAS_WIKI_LOCAL_MARKDOWN_PATH=/path/to/confidential/vault
+
+cd atlas-confluence-sync
+mvn spring-boot:run
+```
+
+No profile, no Confluence env vars needed (and they'll be ignored if set).
+
 ## Troubleshooting
 
 **"createdb: command not found"** — Postgres isn't on your PATH. Try `brew services restart postgresql@16` and reopen the terminal.

@@ -1,6 +1,6 @@
 # Atlas — Current State
 
-One-page summary of what is built, what is tested, what is not done, and what is deferred. Last updated: 2026-05-05, **end of Phase 5.8 M3** (dual-sink integration landed; per-sink rendering + dual-column persistence proven by an end-to-end integration test). Phase 5.7 paused; Phase 5.8 active (M1 ✅, M2 ✅, M3 ✅, M4 pending — default flip + dogfood verification); Phase 5.9 planned.
+One-page summary of what is built, what is tested, what is not done, and what is deferred. Last updated: 2026-05-05, **end of Phase 5.8 (closed)** — local Markdown wiki sink shipped, dual-sink dogfood verified live, production defaults now favour confidential-safe local-only. Phase 5.7 (Spring Integration drill-down) paused; Phase 5.9 (configuration extraction) is the next phase.
 
 ## What's built and working
 
@@ -90,14 +90,14 @@ Not all gaps are deferred decisions; some are intentional non-goals at prototype
 
 `docs/plans/2026-04-29-code-driven-documentation.md` — closed. Seven milestones (M1, M2, M2.5, M3, M3.5, M4, M4.5, M5 + interim phase reflection + end-of-phase reflection). All seven plan-stated success criteria met. The interview is materially shrunk; the dogfood is honest; per-source provenance is uniform across data types; the append-only model and per-source composition extend cleanly to future writers.
 
-## In-flight phase: local Markdown wiki sink (2026-05-05)
+## Closed phase: local Markdown wiki sink (2026-05-05)
 
-`docs/plans/2026-05-05-local-markdown-wiki-sink.md` — active. Phase 5.7 (Spring Integration drill-down) is paused; this phase is the prerequisite for the local-only sink workflow needed by the ownership-analysis mission (no external Confluence egress allowed for confidential codebases).
+`docs/plans/2026-05-05-local-markdown-wiki-sink.md` — closed. Four milestones; phase-boundary reflection appended to the plan doc. Phase 5.7 (Spring Integration drill-down) was paused for this phase because confidential-target ownership analysis is its first real subject and required no-egress rendering before SI drill-down could resume.
 
 - **M1 ✅** — `WikiSink` interface + `ConfluenceWikiSink` refactor. SyncCoordinator iterates over enabled sinks; existing 128 atlas-confluence-sync tests stay green; +14 new tests cover the abstraction + the disabled-Confluence path.
 - **M2 ✅** — Parallel Markdown renderers (10 of them, not 7 as originally planned). All consume the existing `*PageContext` records. Output: GFM with YAML front matter, Obsidian WikiLinks, fenced mermaid + json blocks, GFM pipe tables. Shared helpers in `MarkdownRenderingUtil`. No existing Confluence renderer was touched. +109 tests across 10 new test classes.
 - **M3 ✅** — V25 schema + entity/record/repository wiring + `MarkdownPagePathResolver` (incl. `wikiLinkTargetFor`) + `LocalMarkdownWikiSink` + per-sink `SyncCoordinator` rewrite + dual-sink integration test. Path A taken (per the 2026-05-05 open decision): pushed through the SyncCoordinator refactor in one pass rather than splitting into M3.5. Per-sink dispatch via a `SinkRoute` enum (CONFLUENCE / MARKDOWN / OTHER); `OTHER` sinks render the Confluence body and skip persistence so test doubles like `RecordingWikiSink` don't clobber the Confluence column. End-to-end `DualSinkIntegrationTest` verifies a single sync produces both Confluence pages and a complete `.md` vault, both columns populate independently, and soft-delete walks both refs.
-- **M4** — Default flip (`local-markdown.enabled=true`, `confluence.enabled=false`) + dogfood verification. Confluence sink stays available via `confluence-dogfood` profile for the existing public Atlas instance.
+- **M4 ✅** — Production defaults flipped via main `application.properties` (`local-markdown.enabled=true`, `confluence.enabled=false`); `confluence-dogfood` Spring profile re-enables both sinks for the existing public Atlas instance. Test-classpath shadow at `atlas-confluence-sync/src/test/resources/application.properties` re-declares pre-M4 sink defaults so the existing 287 atlas-confluence-sync tests pass without per-test changes. `SETUP.md` extended with a "Wiki Sinks" section documenting the two-instance pattern. **Dogfood verified live**: `--spring.profiles.active=confluence-dogfood` against the live ATLAS Confluence space + a fresh vault produced `successCount:3,failureCount:0`; both `confluence_page_id` AND `local_markdown_path` populated for every service row; vault contains 5 well-known pages + 9 per-service pages × 3 services with YAML front matter, Obsidian WikiLinks (short + aliased forms), and a mermaid block in `architecture-map.md`.
 
 ## Closed phase: drill-down depth L3–L5 (2026-04-30)
 
