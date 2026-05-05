@@ -484,6 +484,89 @@ class ServiceRelationshipsRepositoryTest {
         assertThat(rows.get(0).prefix()).isEmpty();
     }
 
+    // ---- service_enable_annotations (Phase 5.9 M3) -----------------------
+
+    @Test
+    void whenEnableAnnotationIsInserted_thenLiveViewReturnsItWithSimpleNameFqnAndJavadoc() {
+        Service svc = save("enable-svc", "team");
+
+        relationships.insertEnableAnnotation(svc.getId(), "",
+                "com.example.MyApp", "EnableScheduling",
+                "org.springframework.scheduling.annotation.EnableScheduling",
+                "Enables Spring's scheduled task execution capability.");
+
+        java.util.List<ServiceEnableAnnotation> rows = relationships.findEnableAnnotationsFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        ServiceEnableAnnotation a = rows.get(0);
+        assertThat(a.enclosingClass()).isEqualTo("com.example.MyApp");
+        assertThat(a.annotationSimpleName()).isEqualTo("EnableScheduling");
+        assertThat(a.annotationFqn()).isEqualTo("org.springframework.scheduling.annotation.EnableScheduling");
+        assertThat(a.javadocFirstSentence()).isEqualTo("Enables Spring's scheduled task execution capability.");
+        assertThat(a.source()).isEqualTo("source-tree");
+    }
+
+    @Test
+    void whenEnableAnnotationHasMultipleObservations_thenLiveViewReturnsLatest() {
+        Service svc = save("enable-evolve", "team");
+
+        relationships.insertEnableAnnotation(svc.getId(), "",
+                "com.example.App", "EnableX", "old.fqn.EnableX", null);
+        relationships.insertEnableAnnotation(svc.getId(), "",
+                "com.example.App", "EnableX", "new.fqn.EnableX", "Activates X.");
+
+        java.util.List<ServiceEnableAnnotation> rows = relationships.findEnableAnnotationsFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).annotationFqn()).isEqualTo("new.fqn.EnableX");
+        assertThat(rows.get(0).javadocFirstSentence()).isEqualTo("Activates X.");
+    }
+
+    @Test
+    void whenEnableAnnotationIsTombstoned_thenLiveViewExcludesIt() {
+        Service svc = save("enable-tombstone", "team");
+
+        relationships.insertEnableAnnotation(svc.getId(), "",
+                "com.example.App", "EnableOld", "old.EnableOld", null);
+        relationships.writeEnableAnnotationTombstone(svc.getId(), "",
+                "com.example.App", "EnableOld", "source-tree");
+
+        assertThat(relationships.findEnableAnnotationsFor(svc.getId())).isEmpty();
+    }
+
+    @Test
+    void whenSameClassHasMultipleEnableAnnotations_thenAllAreLiveObservations() {
+        // A single @Configuration class typically activates several subsystems
+        // via stacked @Enable* annotations.
+        Service svc = save("enable-multi", "team");
+
+        relationships.insertEnableAnnotation(svc.getId(), "",
+                "com.example.App", "EnableScheduling", "org.springframework.s.EnableScheduling", null);
+        relationships.insertEnableAnnotation(svc.getId(), "",
+                "com.example.App", "EnableJpaRepositories", "org.springframework.d.j.EnableJpaRepositories", null);
+        relationships.insertEnableAnnotation(svc.getId(), "",
+                "com.example.App", "EnableAsync", "org.springframework.s.a.EnableAsync", null);
+
+        java.util.List<ServiceEnableAnnotation> rows = relationships.findEnableAnnotationsFor(svc.getId());
+        assertThat(rows).hasSize(3);
+        assertThat(rows).extracting(ServiceEnableAnnotation::annotationSimpleName)
+                .containsExactlyInAnyOrder("EnableScheduling", "EnableJpaRepositories", "EnableAsync");
+    }
+
+    @Test
+    void whenEnableAnnotationJavadocIsNull_thenItIsStoredAndReturnedAsNull() {
+        // Spring's built-in @Enable* annotations live in the Spring JAR and
+        // are not reachable via same-module javadoc resolution; their rows
+        // carry javadoc_first_sentence = NULL.
+        Service svc = save("enable-no-javadoc", "team");
+
+        relationships.insertEnableAnnotation(svc.getId(), "",
+                "com.example.App", "EnableScheduling",
+                "org.springframework.scheduling.annotation.EnableScheduling", null);
+
+        java.util.List<ServiceEnableAnnotation> rows = relationships.findEnableAnnotationsFor(svc.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).javadocFirstSentence()).isNull();
+    }
+
     // ---- service_config_properties (Phase 5.9 M1) ------------------------
 
     @Test

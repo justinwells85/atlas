@@ -4,6 +4,7 @@ import com.atlas.services.ApiSummary;
 import com.atlas.services.Service;
 import com.atlas.services.ServiceConfigProperty;
 import com.atlas.services.ServiceConfigurationPropertiesType;
+import com.atlas.services.ServiceEnableAnnotation;
 import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceRelationshipsRepository;
 import com.atlas.services.ServiceRepository;
@@ -86,6 +87,7 @@ class CodeSyncCoordinatorTest {
         jdbc.update("DELETE FROM external_dependencies");
         jdbc.update("DELETE FROM service_value_injections");
         jdbc.update("DELETE FROM service_configuration_properties_types");
+        jdbc.update("DELETE FROM service_enable_annotations");
         jdbc.update("DELETE FROM service_config_properties");
         jdbc.update("DELETE FROM service_changes");
         jdbc.update("DELETE FROM services");
@@ -1357,6 +1359,181 @@ class CodeSyncCoordinatorTest {
         assertThat(relationships.findValueInjectionsFor(s.getId()))
                 .extracting(ServiceValueInjection::enclosingClass)
                 .containsExactly("com.example.Good");
+    }
+
+    // ---- refreshConfiguration @Enable* extension (Phase 5.9 M3) ---------
+
+    @Test
+    void whenConfigurationClassHasEnableAnnotation_thenItIsPersistedWithFqnFromImport() {
+        Service s = saveServiceWithRepo("enable-svc", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        stubGithubListing("/repos/o/r/contents/src/main/java", """
+                [{"type":"file","name":"AppConfig.java","path":"src/main/java/AppConfig.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.context.annotation.Configuration;
+                import org.springframework.scheduling.annotation.EnableScheduling;
+                @Configuration
+                @EnableScheduling
+                public class AppConfig {}
+                """)));
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isEqualTo(1);
+        List<ServiceEnableAnnotation> rows = relationships.findEnableAnnotationsFor(s.getId());
+        assertThat(rows).hasSize(1);
+        ServiceEnableAnnotation a = rows.get(0);
+        assertThat(a.enclosingClass()).isEqualTo("com.example.AppConfig");
+        assertThat(a.annotationSimpleName()).isEqualTo("EnableScheduling");
+        assertThat(a.annotationFqn()).isEqualTo("org.springframework.scheduling.annotation.EnableScheduling");
+        assertThat(a.javadocFirstSentence()).isNull();
+        assertThat(a.source()).isEqualTo("source-tree");
+    }
+
+    @Test
+    void whenEnableAnnotationDefinitionIsInSameModule_thenJavadocFirstSentenceIsResolved() {
+        // Two source files: the @Configuration class that uses the annotation,
+        // and the annotation's own definition. The same-module javadoc
+        // resolution should attach the annotation's class-level first
+        // sentence to the use-site row.
+        Service s = saveServiceWithRepo("enable-jdoc-svc", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        stubGithubListing("/repos/o/r/contents/src/main/java", """
+                [
+                  {"type":"file","name":"AppConfig.java","path":"src/main/java/AppConfig.java",
+                   "encoding":"base64","content":"%s"},
+                  {"type":"file","name":"EnableMystery.java","path":"src/main/java/EnableMystery.java",
+                   "encoding":"base64","content":"%s"}
+                ]
+                """.formatted(
+                b64("""
+                package com.example;
+                import org.springframework.context.annotation.Configuration;
+                @Configuration
+                @EnableMystery
+                public class AppConfig {}
+                """),
+                b64("""
+                package com.example;
+                /**
+                 * Activates the org's mystery subsystem. Also flips a feature flag.
+                 */
+                public @interface EnableMystery {}
+                """)));
+
+        coordinator.refreshConfiguration(s.getId());
+
+        List<ServiceEnableAnnotation> rows = relationships.findEnableAnnotationsFor(s.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).annotationFqn()).isEqualTo("com.example.EnableMystery");
+        assertThat(rows.get(0).javadocFirstSentence())
+                .isEqualTo("Activates the org's mystery subsystem.");
+    }
+
+    @Test
+    void whenConfigurationClassHasMultipleEnableAnnotations_thenAllArePersistedAsSeparateRows() {
+        Service s = saveServiceWithRepo("enable-multi-svc", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        stubGithubListing("/repos/o/r/contents/src/main/java", """
+                [{"type":"file","name":"App.java","path":"src/main/java/App.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.boot.autoconfigure.SpringBootApplication;
+                import org.springframework.scheduling.annotation.EnableScheduling;
+                import org.springframework.scheduling.annotation.EnableAsync;
+                @SpringBootApplication
+                @EnableScheduling
+                @EnableAsync
+                public class App {}
+                """)));
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isEqualTo(2);
+        assertThat(relationships.findEnableAnnotationsFor(s.getId()))
+                .extracting(ServiceEnableAnnotation::annotationSimpleName)
+                .containsExactlyInAnyOrder("EnableScheduling", "EnableAsync");
+    }
+
+    @Test
+    void whenEnableAnnotationDisappearsFromSource_thenItIsTombstoned() {
+        Service s = saveServiceWithRepo("enable-trim-svc", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        String first = """
+                [{"type":"file","name":"AppConfig.java","path":"src/main/java/AppConfig.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.context.annotation.Configuration;
+                import org.springframework.scheduling.annotation.EnableScheduling;
+                import org.springframework.scheduling.annotation.EnableAsync;
+                @Configuration
+                @EnableScheduling
+                @EnableAsync
+                public class AppConfig {}
+                """));
+        stubGithubListing("/repos/o/r/contents/src/main/java", first);
+        coordinator.refreshConfiguration(s.getId());
+
+        wireMock.resetAll();
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        String second = """
+                [{"type":"file","name":"AppConfig.java","path":"src/main/java/AppConfig.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.context.annotation.Configuration;
+                import org.springframework.scheduling.annotation.EnableScheduling;
+                @Configuration
+                @EnableScheduling
+                public class AppConfig {}
+                """));
+        stubGithubListing("/repos/o/r/contents/src/main/java", second);
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result.created()).isZero();
+        assertThat(result.deleted()).isEqualTo(1);
+        assertThat(relationships.findEnableAnnotationsFor(s.getId()))
+                .extracting(ServiceEnableAnnotation::annotationSimpleName)
+                .containsExactly("EnableScheduling");
+    }
+
+    @Test
+    void whenSecondRefreshHasIdenticalEnableAnnotations_thenItIsIdempotent() {
+        Service s = saveServiceWithRepo("idem-enable-svc", "https://github.com/o/r", null);
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        String body = """
+                [{"type":"file","name":"AppConfig.java","path":"src/main/java/AppConfig.java",
+                  "encoding":"base64","content":"%s"}]
+                """.formatted(b64("""
+                package com.example;
+                import org.springframework.context.annotation.Configuration;
+                import org.springframework.scheduling.annotation.EnableScheduling;
+                @Configuration
+                @EnableScheduling
+                public class AppConfig {}
+                """));
+        stubGithubListing("/repos/o/r/contents/src/main/java", body);
+        coordinator.refreshConfiguration(s.getId());
+
+        wireMock.resetAll();
+        wireMock.stubFor(get(urlPathEqualTo("/repos/o/r/contents/src/main/resources"))
+                .willReturn(aResponse().withStatus(404)));
+        stubGithubListing("/repos/o/r/contents/src/main/java", body);
+
+        CodeSyncResult result = coordinator.refreshConfiguration(s.getId());
+
+        assertThat(result).isEqualTo(CodeSyncResult.empty());
     }
 
     private void stubGithubFile(String path, String content) {

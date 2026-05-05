@@ -10,6 +10,29 @@ Newest at top.
 
 ---
 
+## DD-018 — Cross-module same-repo javadoc resolution for `@Enable*` annotations
+
+**Status**: Deferred. *Captured Phase 5.9 M3 — configuration extraction.*
+
+The Phase 5.9 M3 extractor captures every `@Enable*`-prefixed annotation use-site on a service's `@Configuration` / `@SpringBootApplication` classes, plus the import-resolved FQN. Javadoc resolution is best-effort: the coordinator builds an FQN → first-sentence map across the SAME-MODULE source tree (the `{module_path}/src/main/java/**/*.java` files we're already walking for `@Value` / `@ConfigurationProperties` extraction). When the annotation's source lives in that walk, javadoc populates; otherwise `javadoc_first_sentence` stays NULL.
+
+This catches two cases for free: the rare in-line declaration (where an org-internal `@EnableMystery` annotation lives next to its consuming `@Configuration` class) and Spring's built-ins (which always live outside the walk → NULL). It does NOT catch the most common org-internal pattern: a shared annotations module / library declaring `@EnableMyThing` types that downstream services import — those rows ship with NULL javadoc until this gap closes.
+
+**Why deferred**: cross-module same-repo resolution requires either (a) walking source trees of sibling modules in the same git repo (needs a "what counts as 'same repo'" heuristic and a way to enumerate sibling module roots — Atlas's `service_modules` data is per-service, not per-repo), or (b) a separate "annotations source" config field per service plus another `RepoFileFetcher` round trip. Both are non-trivial scope adds for prototype scale. The Spring built-in path stays NULL regardless — those javadocs live in the Spring JAR and aren't reachable without classpath introspection (which Atlas explicitly avoids per the AST-only constraint).
+
+**Trigger to revisit**: when an ownership-target codebase imports a shared annotations library whose javadocs would be load-bearing for the rendered Configuration page. The Phase 5.7 SI ownership-analysis target is the main candidate — its in-house `@Enable*` annotations come from a shared microservice-common library.
+
+**Remediation sketch**:
+
+1. Add `services.annotations_repo_url TEXT` (or a separate `service_annotation_sources` table for multi-source support).
+2. New `RepoFileFetcher` walk: for each unique `annotation_fqn` whose first segment matches a configured "in-org" prefix, fetch the annotation's source file by FQN-as-path, parse with JavaParser, extract first-sentence javadoc.
+3. Cache the FQN → javadoc index across one refresh so identical FQNs from different services don't re-fetch.
+4. Tests: synthetic two-repo fixture (annotation in repo A, consumer in repo B) — assert M3 captures the use-site row with the resolved javadoc.
+
+A simpler interim alternative: a curated `@Enable*` → javadoc map in `application.properties` (`atlas.code-sync.enable-annotation-javadocs.com.example.EnableMyThing=...`) that the coordinator overlays on extracted rows. Cheap, manual, but unblocks the demo for the SI target without infrastructure.
+
+---
+
 ## DD-017 — Spring Boot relaxed-binding aliases are not normalised in `service_config_properties`
 
 **Status**: Deferred. *Captured Phase 5.9 M1 — configuration extraction.*

@@ -5,6 +5,7 @@ import com.atlas.services.Service;
 import com.atlas.services.ServiceBean;
 import com.atlas.services.ServiceConfigProperty;
 import com.atlas.services.ServiceConfigurationPropertiesType;
+import com.atlas.services.ServiceEnableAnnotation;
 import com.atlas.services.ServiceMetadata;
 import com.atlas.services.ServiceModule;
 import com.atlas.services.ServiceRelationshipsRepository;
@@ -67,6 +68,8 @@ public class CodeSyncCoordinator {
     private final PomParser pomParser;
     private final PropertiesFileParser propertiesParser;
     private final JavaConfigurationExtractor configurationExtractor;
+    private final JavaEnableAnnotationExtractor enableAnnotationExtractor;
+    private final JavaTypeJavadocIndexer typeJavadocIndexer;
     private final String orgGroupPrefix;
 
     public CodeSyncCoordinator(ServiceRepository services,
@@ -79,6 +82,8 @@ public class CodeSyncCoordinator {
                                PomParser pomParser,
                                PropertiesFileParser propertiesParser,
                                JavaConfigurationExtractor configurationExtractor,
+                               JavaEnableAnnotationExtractor enableAnnotationExtractor,
+                               JavaTypeJavadocIndexer typeJavadocIndexer,
                                @Value("${atlas.code-sync.org-group-prefix:com.atlas}") String orgGroupPrefix) {
         this.services = services;
         this.relationships = relationships;
@@ -90,6 +95,8 @@ public class CodeSyncCoordinator {
         this.pomParser = pomParser;
         this.propertiesParser = propertiesParser;
         this.configurationExtractor = configurationExtractor;
+        this.enableAnnotationExtractor = enableAnnotationExtractor;
+        this.typeJavadocIndexer = typeJavadocIndexer;
         this.orgGroupPrefix = orgGroupPrefix;
     }
 
@@ -612,10 +619,11 @@ public class CodeSyncCoordinator {
             }
         }
 
-        // ---- Pass 2: source tree (@Value + @ConfigurationProperties) ----
+        // ---- Pass 2: source tree (@Value + @ConfigurationProperties + @Enable*) ----
         List<RepoFile> sources = repoFetcher.listJavaSourcesUnder(coords.owner(), coords.repo(), mainSourcesPath);
         List<ValueInjectionRecord> freshValues = new ArrayList<>();
         List<ConfigurationPropertiesTypeRecord> freshConfigTypes = new ArrayList<>();
+        List<EnableAnnotationRecord> freshEnableAnnotations = new ArrayList<>();
         for (RepoFile f : sources) {
             try {
                 ConfigurationExtractionResult er = configurationExtractor.extract(f.content());
@@ -624,7 +632,20 @@ public class CodeSyncCoordinator {
             } catch (IllegalArgumentException e) {
                 log.warn("Skipping unparseable config-extraction source {}: {}", f.path(), e.getMessage());
             }
+            try {
+                freshEnableAnnotations.addAll(enableAnnotationExtractor.extract(f.content()));
+            } catch (IllegalArgumentException e) {
+                log.warn("Skipping unparseable enable-annotation source {}: {}", f.path(), e.getMessage());
+            }
         }
+        // Same-module javadoc resolution: build an FQN → first-sentence map
+        // from the already-walked source tree. Annotations defined outside
+        // this module (Spring's built-ins, sibling-module org-internals)
+        // produce no map entry → javadoc stays NULL on the row. Cross-module
+        // same-repo resolution is deferred (DD-018).
+        Map<String, String> javadocByFqn = freshEnableAnnotations.isEmpty()
+                ? Map.of()
+                : typeJavadocIndexer.indexFirstSentencesByFqn(sources);
 
         // ---- Diff + write: properties ----------------------------------
         Map<String, ServiceConfigProperty> liveProps = new HashMap<>();
@@ -698,11 +719,48 @@ public class CodeSyncCoordinator {
                     stale.modulePath(), stale.enclosingClass(), BEANS_SOURCE);
         }
 
+        // ---- Diff + write: @Enable* annotations -----------------------
+        Map<String, ServiceEnableAnnotation> liveEnable = new HashMap<>();
+        for (ServiceEnableAnnotation a : relationships.findEnableAnnotationsFor(serviceId)) {
+            if (BEANS_SOURCE.equals(a.source())) {
+                liveEnable.put(enableKey(a.modulePath(), a.enclosingClass(),
+                        a.annotationSimpleName()), a);
+            }
+        }
+        for (EnableAnnotationRecord rec : freshEnableAnnotations) {
+            String javadoc = javadocByFqn.get(rec.annotationFqn());
+            String k = enableKey(modulePathTag, rec.enclosingClass(), rec.annotationSimpleName());
+            ServiceEnableAnnotation current = liveEnable.remove(k);
+            if (current == null || enableChanged(current, rec, javadoc)) {
+                relationships.insertEnableAnnotation(serviceId, modulePathTag,
+                        rec.enclosingClass(), rec.annotationSimpleName(),
+                        rec.annotationFqn(), javadoc);
+                created++;
+            }
+        }
+        deleted += liveEnable.size();
+        for (ServiceEnableAnnotation stale : liveEnable.values()) {
+            relationships.writeEnableAnnotationTombstone(serviceId, stale.modulePath(),
+                    stale.enclosingClass(), stale.annotationSimpleName(), BEANS_SOURCE);
+        }
+
         if (created + deleted > 0) {
             relationships.insertServiceChange(serviceId, CONFIG_CHANGED_BY, "updated",
                     "Configuration refresh: created=" + created + " deleted=" + deleted);
         }
         return new CodeSyncResult(created, 0, deleted, 0);
+    }
+
+    private static String enableKey(String modulePath, String enclosingClass,
+                                     String annotationSimpleName) {
+        return modulePath + "|" + enclosingClass + "|" + annotationSimpleName;
+    }
+
+    private static boolean enableChanged(ServiceEnableAnnotation current,
+                                          EnableAnnotationRecord fresh,
+                                          String freshJavadoc) {
+        return !equalsNullable(current.annotationFqn(), fresh.annotationFqn())
+                || !equalsNullable(current.javadocFirstSentence(), freshJavadoc);
     }
 
     private static String valueKey(String modulePath, String enclosingClass,

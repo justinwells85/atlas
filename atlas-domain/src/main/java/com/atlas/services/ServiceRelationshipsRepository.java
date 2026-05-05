@@ -1065,6 +1065,84 @@ public class ServiceRelationshipsRepository {
                 serviceId);
     }
 
+    // --- service_enable_annotations (Phase 5.9 M3 — append-only from day one)
+
+    /**
+     * Append one {@code @Enable*} annotation use-site observation. Defaults
+     * to {@code presence='present'} with source {@code 'source-tree'}.
+     */
+    public UUID insertEnableAnnotation(UUID serviceId, String modulePath,
+                                        String enclosingClass,
+                                        String annotationSimpleName,
+                                        String annotationFqn,
+                                        String javadocFirstSentence) {
+        return insertEnableAnnotation(serviceId, modulePath, enclosingClass,
+                annotationSimpleName, annotationFqn, javadocFirstSentence,
+                "source-tree", "present");
+    }
+
+    public UUID insertEnableAnnotation(UUID serviceId, String modulePath,
+                                        String enclosingClass,
+                                        String annotationSimpleName,
+                                        String annotationFqn,
+                                        String javadocFirstSentence,
+                                        String source, String presence) {
+        UUID id = UUID.randomUUID();
+        jdbc.update(
+                "INSERT INTO service_enable_annotations " +
+                        "(id, service_id, module_path, enclosing_class, annotation_simple_name, " +
+                        " annotation_fqn, javadoc_first_sentence, source, presence) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                id, serviceId, modulePath == null ? "" : modulePath,
+                enclosingClass, annotationSimpleName, annotationFqn,
+                javadocFirstSentence, source, presence);
+        return id;
+    }
+
+    /** Append a {@code presence='absent'} tombstone for an @Enable* use-site no longer in the source tree. */
+    public UUID writeEnableAnnotationTombstone(UUID serviceId, String modulePath,
+                                                String enclosingClass,
+                                                String annotationSimpleName,
+                                                String source) {
+        // annotation_fqn is required by the table schema (NOT NULL); carry
+        // the simple name as a defensible default for tombstones — the
+        // renderer never surfaces tombstones.
+        return insertEnableAnnotation(serviceId, modulePath, enclosingClass,
+                annotationSimpleName, annotationSimpleName, null, source, "absent");
+    }
+
+    /**
+     * Live view: latest observation per
+     * {@code (service_id, module_path, enclosing_class, annotation_simple_name)}
+     * where {@code presence='present'}. Used by the Configuration page renderer.
+     */
+    public List<ServiceEnableAnnotation> findEnableAnnotationsFor(UUID serviceId) {
+        return jdbc.query(
+                "WITH latest AS (" +
+                        "  SELECT id, service_id, module_path, enclosing_class, annotation_simple_name, " +
+                        "         annotation_fqn, javadoc_first_sentence, source, presence, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY service_id, module_path, enclosing_class, " +
+                        "                            annotation_simple_name " +
+                        "                            ORDER BY observed_at DESC, id DESC) AS rn " +
+                        "  FROM service_enable_annotations " +
+                        ") " +
+                        "SELECT id, service_id, module_path, enclosing_class, annotation_simple_name, " +
+                        "       annotation_fqn, javadoc_first_sentence, source " +
+                        "FROM latest " +
+                        "WHERE rn = 1 AND presence = 'present' AND service_id = ? " +
+                        "ORDER BY enclosing_class, annotation_simple_name",
+                (rs, i) -> new ServiceEnableAnnotation(
+                        (UUID) rs.getObject("id"),
+                        (UUID) rs.getObject("service_id"),
+                        rs.getString("module_path"),
+                        rs.getString("enclosing_class"),
+                        rs.getString("annotation_simple_name"),
+                        rs.getString("annotation_fqn"),
+                        rs.getString("javadoc_first_sentence"),
+                        rs.getString("source")),
+                serviceId);
+    }
+
     // --- service_config_properties (Phase 5.9 M1 — append-only from day one)
 
     /**

@@ -114,6 +114,32 @@ Per-milestone test counts above are estimates; the floor is "every observable be
 
 ## Reflections
 
+### M3 reflection (2026-05-05, session 4)
+
+**What's working**
+
+- The lexical-only `@Enable*` filter is the right call for prototype scale. `JavaEnableAnnotationExtractor` checks "annotation simple name starts with `Enable`" and "enclosing class has `@Configuration` or `@SpringBootApplication`" — both pure AST predicates, no compilation. Catches Spring's built-ins, in-house org-prefixed annotations, and unintentional false positives like `@EnableMystery` on a non-`@Configuration` class (which Spring wouldn't activate either, so excluding them is correct).
+- The same-package FQN fallback (added during the M3 implementation after a test caught the gap) is the Java-correct resolution rule. An unimported, unqualified annotation reference resolves to the current package per the JLS — and that's the most common case for org-internal `@Enable*` annotations declared next to their consumers. Worth carrying into the M2 plan-doc terminology if it's still using "fall back to simple name."
+- The same-module javadoc resolution via `JavaTypeJavadocIndexer` is a clean separation. The extractor stays pure; the coordinator orchestrates the FQN → javadoc index build. The indexer walks every `TypeDeclaration` (class, interface, record, enum, annotation), so it catches `@interface` declarations naturally. Spring's built-ins live in JARs and produce no map entry → `javadoc_first_sentence` stays NULL, exactly the behaviour the schema documents.
+- The "extend the existing endpoint" pattern (now three passes in `refreshConfiguration` — properties, source-tree config extraction, source-tree enable-annotation extraction) keeps the surface clean. One `created` / `deleted` counter pair, one audit row per refresh that mutates state. The diff-and-write cadence per data type fits in ~25 lines of per-type code.
+
+**What's not / friction**
+
+- **Test caught a real bug.** The first-cut `JavaEnableAnnotationExtractor` defaulted unimported annotations to their simple name as the FQN. When the M3 coordinator integration test ran with the annotation in the same package as the consumer (the typical case for in-house annotations), the FQN didn't match the indexer's map keys → javadoc stayed NULL even though the source was right there. Real bug masked by an over-narrow extractor unit test. Fix was small (same-package fallback rule); fix-driven update to `whenEnableAnnotationIsNotImported_thenFqnFallsBackToSimpleName` (renamed to `whenEnableAnnotationIsNotImported_thenFqnIsResolvedToTheSamePackage`) — the unit test had codified incorrect behaviour. Worth carrying as a general lesson: when extractor unit tests assert on FQN-resolution shape, the assertion should reflect actual Java semantics, not the easiest-to-implement behaviour. The integration test (which exercises FQN-as-lookup-key against real source files) caught what the unit test missed.
+- **Cross-module same-repo javadoc resolution is the real gap** (DD-018). Same-module catches the rare in-line case; the common org-internal pattern (shared annotations library imported by downstream services) ships with NULL javadoc. Demo-time workaround: a curated map in `application.properties` that the coordinator overlays on extracted rows. Real fix: cross-module / cross-repo source resolution, which is a non-trivial scope add.
+- **Three AST parses per source file.** Each `.java` file is parsed by `JavaConfigurationExtractor`, then `JavaEnableAnnotationExtractor`, then (when @Enable annotations exist) `JavaTypeJavadocIndexer`. JavaParser is fast for small files but this scales O(3 × source-files) which would matter on a large monorepo. Two paths to optimise later: (a) merge the extractors into a single visitor pass with a combined output record (couples concerns); (b) cache `CompilationUnit` per file (fits a Map<RepoFile, CompilationUnit> in the coordinator). Neither is blocking M3 close.
+- **The `BEANS_SOURCE = 'source-tree'` constant (originally Phase 5.6 M3) is now load-bearing for THREE M2/M3 read paths** filtering live observations to "rows produced by source-tree extraction." Right now it's a literal string constant on `CodeSyncCoordinator`. If the SOURCE check list ever expands with additional source-tree-derived sources (e.g. `'source-tree-flow'` for Phase 5.7 IntegrationFlow data), the filter expression becomes a per-data-type concern rather than a single string match. Not blocking; flag for M4 / Phase 5.7-trimmed planning.
+
+**Resumable summary**
+
+Branch `main`, commit pending (M3.5). Test counts: project total 563 (was 543 at end of M2 — net +20). atlas-domain 67 (62 + 5 `service_enable_annotations` cases); atlas-intake 185 (170 + 10 `JavaEnableAnnotationExtractorTest` + 5 `CodeSyncCoordinatorTest` M3 cases); atlas-mcp 24; atlas-confluence-sync 287. New artifacts: V28 migration creating `service_enable_annotations` (annotation_simple_name + annotation_fqn + nullable javadoc_first_sentence + standard observation columns); `ServiceEnableAnnotation` record + insert / tombstone / find-current methods on `ServiceRelationshipsRepository`; `EnableAnnotationRecord` + `JavaEnableAnnotationExtractor` (lexical filter, top-level-only, FQN resolution via imports → use-site qualifier → same-package fallback); new `JavaTypeJavadocIndexer` Spring component for FQN → javadoc-first-sentence indexing across a fetched source tree (used by the coordinator's same-module resolution pass); `CodeSyncCoordinator.refreshConfiguration` extended with a third pass + diff/write for `service_enable_annotations`. Same `POST /api/code-sync/refresh-configuration/{serviceId}` endpoint covers all three passes. **DD-018** added at top of `deferred-decisions.md` (cross-module same-repo javadoc resolution).
+
+**M3 success criteria**: ✅ criterion 4 (`@Enable*` annotation use-sites captured with simple-name + FQN), ✅ criterion 8 (append-only with presence for the new table), ✅ criterion 9 (MariaDB portable — V28 uses the same idioms as V22/V23/V26/V27).
+
+**Next**: M4 — Configuration page renderers (Confluence + Markdown), L2 Section 8 wiring, dual-column persistence (V29 adds `services.configuration_page_id` + `services.local_markdown_configuration_path`), and dogfood. Estimate per plan: 20-25 tests. Closes Phase 5.9.
+
+---
+
 ### M2 reflection (2026-05-05, session 4)
 
 **What's working**
